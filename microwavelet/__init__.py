@@ -24,6 +24,11 @@ Output schema
             "symmetry":float,   # 0 = perfectly symmetric, >0.3 = asymmetric
             "type":    str,     # "peak" | "dip"
             "band":    str,     # primary band used for detection
+            "dchi2":   float,   # delta chi2 (chi2_null - chi2_lens)
+            "dbic":    float,   # delta BIC (chi2_lens - chi2_null + 2 ln(N))
+            "edge_flag": bool,  # True if close to temporal boundaries (artifact)
+            "chromaticity_ratio": float, # ratio of other band scale to primary band
+            "chromatic_flag": bool, # True if wildly chromatic (stellar flare / CV)
         },
         ...
     ],

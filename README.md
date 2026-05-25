@@ -58,26 +58,53 @@ pip install .
 
 ```python
 import numpy as np
-from microwavelet import analyze_lightcurve
+from microwavelet import analyze_lightcurve, characterize_noise
 
-# Prepare relative flux light curve data dict
+# 1. Prepare multi-band relative flux data dict
 data = {
-    "F146": {
-        "t": np.array([50.1, 50.2, 50.3, ...]),      # Times (days)
-        "y": np.array([1.01, 1.05, 1.12, ...]),      # Relative Flux (quiescent ≈ 1.0)
-        "y_err": np.array([0.01, 0.01, 0.01, ...])   # Errors
+    "F146": { # Primary high-cadence band
+        "t": np.arange(0, 100, 0.1),
+        "y": np.random.normal(1.0, 0.01, 1000),      # Relative Flux (quiescent ≈ 1.0)
+        "y_err": np.ones(1000) * 0.01
+    },
+    "F087": { # Secondary band
+        "t": np.arange(0, 100, 0.5),
+        "y": np.random.normal(1.0, 0.01, 200),
+        "y_err": np.ones(200) * 0.01
     }
 }
 
-# Run the anomaly detector
-results = analyze_lightcurve(data)
+# Add a synthetic achromatic microlensing peak at t0 = 50.0
+# (lens amplification Paczynski model excess)
+u = np.sqrt(0.1**2 + ((data["F146"]["t"] - 50.0) / 10.0)**2)
+A = (u**2 + 2.0) / (u * np.sqrt(u**2 + 4.0))
+data["F146"]["y"] += (A - 1.0)
 
-# Print detected anomalies
+u2 = np.sqrt(0.1**2 + ((data["F087"]["t"] - 50.0) / 10.0)**2)
+A2 = (u2**2 + 2.0) / (u2 * np.sqrt(u2**2 + 4.0))
+data["F087"]["y"] += (A2 - 1.0)
+
+# 2. Run the robust white and red noise characterisation utility
+noise_report = characterize_noise(data["F146"]["t"], data["F146"]["y"])
+print(f"White noise scatter: {noise_report['sigma_white']:.4f}")
+print(f"Has red (correlated) noise: {noise_report['has_red_noise']}")
+
+# 3. Run the CWT detector with custom options
+results = analyze_lightcurve(
+    data,
+    interpolator="weighted",  # Use robust local error-weighted Gaussian interpolator
+    cwt_threshold=12.0,       # Custom Z-score threshold
+    min_dchi2=25.0            # Custom delta chi2 threshold
+)
+
+# 4. Print detected anomalies with new physical diagnostics
 for anomaly in results["anomalies"]:
     print(f"Detected {anomaly['type']} at t0 = {anomaly['t0']:.3f} days")
-    print(f"Estimated crossing time tE = {anomaly['tE']:.2f} days")
-    print(f"Estimated impact parameter u0 = {anomaly['u0']:.3f}")
-    print(f"CWT Consensus SNR = {anomaly['snr']:.2f}")
+    print(f"  Crossing time tE = {anomaly['tE']:.2f} days (u0 = {anomaly['u0']:.3f})")
+    print(f"  CWT SNR = {anomaly['snr']:.2f} (band = {anomaly['band']})")
+    print(f"  Analytical dchi2 = {anomaly['dchi2']:.1f} (dbic = {anomaly['dbic']:.1f})")
+    print(f"  Edge Flag = {anomaly['edge_flag']} (boundary artifact suppression)")
+    print(f"  Chromatic Flag = {anomaly['chromatic_flag']} (ratio = {anomaly['chromaticity_ratio']:.3f})")
 ```
 
 ---

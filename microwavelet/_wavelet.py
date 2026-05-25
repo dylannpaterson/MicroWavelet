@@ -1,5 +1,5 @@
 """
-microlens_cwt._wavelet
+microwavelet._wavelet
 ======================
 Scale-space CWT peak/dip finder using Paczynski wavelet kernels.
 

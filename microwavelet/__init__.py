@@ -1,5 +1,5 @@
 """
-microlens_cwt
+microwavelet
 =============
 
 Lightweight, standalone CWT-based anomaly detector for multi-filter

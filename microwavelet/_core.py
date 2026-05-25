@@ -1,5 +1,5 @@
 """
-microlens_cwt._core
+microwavelet._core
 ===================
 High-level ``analyze_lightcurve`` entry point.
 

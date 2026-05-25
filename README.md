@@ -1,4 +1,4 @@
-# microlens-cwt
+# MicroWavelet
 
 CWT-based anomaly detector for multi-filter microlensing light curves.
 

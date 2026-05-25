@@ -1,5 +1,5 @@
 """
-microlens_cwt._detrending
+microwavelet._detrending
 =========================
 Periodic GP baseline detrending for multi-filter light curves.
 

@@ -109,6 +109,16 @@ for anomaly in results["anomalies"]:
 
 ---
 
+## Pipeline Demonstration Plot
+
+Below is a diagnostic plot demonstrating the end-to-end `MicroWavelet` pipeline on a synthetic multi-band dataset with small observational errors:
+1. **Upper Panel**: Shows the multi-band observations (blue circles for high-cadence `F146`, red squares for sparse `F087`), the robust local error-weighted Gaussian interpolation (dashed gray line), the vertical peak center marker, and the fitted analytical Paczynski template (green solid line).
+2. **Lower Panel**: Shows the CWT scale-space consensus Z-score (SNR) power map peaking spectacularly above the default $12\sigma$ detection threshold (red dashed line) at the exact time of the microlensing event.
+
+![MicroWavelet Pipeline Diagnostic Demonstration](docs/cwt_demo.png)
+
+---
+
 ## Running Verification Tests
 
 To verify the logic and accuracy of the CWT timescale estimation:

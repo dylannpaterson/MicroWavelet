@@ -130,7 +130,7 @@ def _u0_from_amplification(A):
 # tE bias correction
 # ---------------------------------------------------------------------------
 
-def _tE_correction_factor(u0_event, u0_template=0.05, half_window=10.0, n_pts=1001):
+def _tE_correction_factor(u0_event, u0_template=0.05):
     """
     Compute the multiplicative factor to correct the CWT tE bias due to
     template u0 mismatch.
@@ -140,13 +140,13 @@ def _tE_correction_factor(u0_event, u0_template=0.05, half_window=10.0, n_pts=10
     The even kernel is built at ``u0_template=0.05`` (a narrow, high-mag
     template).  For events with larger u0, the Paczynski 2nd-derivative
     structure is *wider* in time.  The CWT maximum occurs at a scale that
-    makes the template width match the data width, so:
+    makes the template width match the data width:
 
-        tE_cwt × σ(u0_template) ≈ tE_true × σ(u0_event)
-        → tE_true = tE_cwt × σ(u0_template) / σ(u0_event)
+        tE_scan = tE_true * r_peak(u0_event)
+        → tE_true = tE_scan / r_peak(u0_event)
 
-    where σ(u0) is the RMS width of the 2nd-derivative Paczynski kernel
-    computed at tE=1 (scale-free, since σ scales linearly with tE).
+    where r_peak(u0) is the exact numerical peak ratio computed via 
+    scale-invariant CWT.
 
     Parameters
     ----------
@@ -154,101 +154,30 @@ def _tE_correction_factor(u0_event, u0_template=0.05, half_window=10.0, n_pts=10
         Estimated u0 of the real event (from flux inversion).
     u0_template : float
         u0 used to build the CWT kernel (default 0.05).
-    half_window : float
-        Integration half-window in units of tE=1 (dimensionless).
-    n_pts : int
-        Grid resolution for the numerical integration.
 
     Returns
     -------
     float : correction factor f such that ``tE_true ≈ tE_cwt * f``.
-            Returns 1.0 if u0_event is invalid or very close to u0_template.
+            Returns 1.0 if u0_event is invalid.
     """
     if u0_event is None or np.isnan(u0_event) or u0_event <= 0:
         return 1.0
 
-    def _rms_width(u0):
-        """RMS width of |d²A/dt²| for a unit-tE Paczynski event at given u0."""
-        t = np.linspace(-half_window, half_window, n_pts)
-        u = np.sqrt(u0 ** 2 + t ** 2)          # tE = 1
-        A = (u ** 2 + 2) / (u * np.sqrt(u ** 2 + 4))
-        dt = t[1] - t[0]
-        A2 = np.gradient(np.gradient(A, dt), dt)
-        abs_A2 = np.abs(A2)
-        total = np.sum(abs_A2)
-        if total < 1e-12:
-            return 1.0
-        return np.sqrt(np.sum(t ** 2 * abs_A2) / total)
-
-    sigma_template = _rms_width(u0_template)
-    sigma_event    = _rms_width(u0_event)
-
-    if sigma_event < 1e-10:
+    # Weighted degree-5 polynomial coefficients from numerical peak fitting:
+    coeffs = [12.07074638, -29.26124165, 28.15495458, -18.91458072, 22.28322211, -0.06346686]
+    poly = np.poly1d(coeffs)
+    r_val = poly(u0_event)
+    
+    # Avoid division by zero or negative values
+    if r_val < 0.01:
         return 1.0
-    return sigma_template / sigma_event
+        
+    return 1.0 / r_val
 
 
 # ---------------------------------------------------------------------------
 # Gamma sweep tE estimator
 # ---------------------------------------------------------------------------
-
-def _refine_tE_matched_u0(f_interp, t_grid, p_idx, tE_scales, dt, u0_est):
-    """
-    Refine the tE estimate using a u0-matched Paczynski kernel.
-
-    Background
-    ----------
-    The scan pass uses a fixed u0=0.05 template.  For higher-u0 events, this
-    template is mismatched: the 2nd-derivative kernel is too narrow, so the
-    scale-space column at the peak time has no genuine local maximum — it
-    just ramps monotonically.  Gamma-sweeping cannot fix this because there
-    is no peak to locate.
-
-    Solution: given u0 from the flux-inversion estimate, rebuild the kernel
-    column at that u0 and find the genuine peak in scale space.  This is
-    fast (O(n_scales × kernel_length)) and gives a well-localised tE estimate
-    even for large-u0 events.
-
-    Returns
-    -------
-    tE_refined : float | None
-        Refined tE, or None if no genuine peak found (fallback to scan value).
-    """
-    if u0_est is None or np.isnan(u0_est) or u0_est <= 0:
-        return None
-
-    col_matched = np.zeros(len(tE_scales))
-    n_time = len(t_grid)
-
-    for j, tE in enumerate(tE_scales):
-        half = int(5.0 * tE / dt)
-        if 2 * half + 1 > n_time:
-            continue
-        tk = np.arange(-half, half + 1) * dt
-        ke, _ = get_kernels(tk, tE, u0=u0_est)
-
-        # Extract the local window around p_idx (no full convolution needed)
-        lo = max(0, p_idx - half)
-        hi = min(n_time, p_idx + half + 1)
-        k_lo = max(0, half - p_idx)
-        k_hi = k_lo + (hi - lo)
-        col_matched[j] = abs(np.sum(ke[k_lo:k_hi] * f_interp[lo:hi]))
-
-    # Find the first genuine local maximum in the matched column
-    dlog_tE = np.log10(tE_scales[1]) - np.log10(tE_scales[0])
-    for j in range(1, len(tE_scales) - 1):
-        if col_matched[j] >= col_matched[j - 1] and col_matched[j] >= col_matched[j + 1]:
-            # Parabolic interpolation
-            a = np.log(col_matched[j - 1] + 1e-12)
-            b = np.log(col_matched[j]     + 1e-12)
-            c = np.log(col_matched[j + 1] + 1e-12)
-            denom = a - 2 * b + c
-            offset = 0.5 * (a - c) / denom if abs(denom) > 1e-12 else 0.0
-            return 10 ** (np.log10(tE_scales[j]) + offset * dlog_tE)
-
-    return None   # no local max found
-
-
 
 def detect_cwt_peaks(
     t_obs,
@@ -327,7 +256,8 @@ def detect_cwt_peaks(
 
     for j, tE in enumerate(tE_scales):
         half = int(5.0 * tE / dt)
-        if 2 * half + 1 > n_time:
+        # Skip scales that are physically larger than the entire observation duration
+        if tE > (t_obs[-1] - t_obs[0]):
             continue
         tk = np.arange(-half, half + 1) * dt
         ke, ko = get_kernels(tk, tE)
@@ -403,8 +333,8 @@ def detect_cwt_peaks(
         for p_idx in peaks:
             col_raw = pe_map[:, p_idx]
 
-            # Initial tE estimate from the scan pass (u0=0.05 template, noise-floor gamma)
-            corrected = col_raw * (tE_scales ** gamma_global)
+            # Initial tE estimate from the scan pass (u0=0.05 template, mathematically correct scale invariance)
+            corrected = col_raw * (tE_scales ** -0.5)
             row_idx = int(np.argmax(corrected))
             dlog_tE = np.log10(tE_scales[1]) - np.log10(tE_scales[0])
             if 0 < row_idx < len(tE_scales) - 1:
@@ -440,12 +370,8 @@ def detect_cwt_peaks(
                 A_peak = np.nan
                 u0_est = np.nan
 
-            # Refine tE using a u0-matched kernel (see _refine_tE_matched_u0 docstring).
-            tE_matched = _refine_tE_matched_u0(
-                f_interp, t_grid, p_idx, tE_scales, dt,
-                u0_est if not np.isnan(u0_est) else None,
-            )
-            exact_tE = tE_matched if tE_matched is not None else tE_scan
+            # Refine tE using analytical bias correction (fast and robust).
+            exact_tE = tE_scan * _tE_correction_factor(u0_est)
 
             found.append({
                 "t0":       float(t_grid[p_idx]),

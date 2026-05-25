@@ -39,6 +39,11 @@ It leverages Paczynski wavelet templates to identify transient signals (such as 
    - Analyzes time-series noise by computing robust white noise scatter (via first-difference MAD), lag-1 and lag-2 autocorrelation, and Pont-style binning scaling excess factors.
    - Automatically flags segments with heavy correlated red noise to enable dynamic threshold scaling and error corrections.
 
+7. **Multi-Band Chromaticity Flagging (`chromatic_flag`, `chromaticity_ratio`)**:
+   - Projects the fixed Paczynski template from the primary band onto the observations of all other filter bands using a fast local 1D weighted linear least-squares fit.
+   - Computes a robust `chromaticity_ratio` ($\mathcal{R} = F_{s,\text{other}} / F_{s,\text{primary}}$). If the ratio is negative (opposite directions) or wildly large ($>3.0$), or if a band with sufficient data shows absolutely no signal (detecting a chromatic stellar flare or systematic anomaly), sets `chromatic_flag = True`.
+   - Protects against uneven cadence gaps by only evaluating other filters that have sufficient active observations inside the event window.
+
 ---
 
 ## Installation

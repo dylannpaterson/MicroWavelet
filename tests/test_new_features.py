@@ -50,9 +50,37 @@ def test_new_features():
     # or min_dchi2 = 100 to verify they are kept.
     res_filtered_none = analyze_lightcurve(data, min_dchi2=1e8)
     assert len(res_filtered_none["anomalies"]) == 0, "High min_dchi2 should filter out all anomalies"
-    
+
     res_filtered_keep = analyze_lightcurve(data, min_dchi2=10.0)
     assert len(res_filtered_keep["anomalies"]) > 0, "Low min_dchi2 should keep the anomalies"
+
+    # Test multi-band chromaticity logic
+    # Achromatic Event (Clean lensed signal in both band1 and band2)
+    t_multi = np.arange(0, 100, 0.1)
+    y_flux1 = paczynski(t_multi, 50.0, 10.0, 0.1)
+    y_flux2 = paczynski(t_multi, 50.0, 10.0, 0.1)  # identical achromatic amplitude
+    
+    data_achromatic = {
+        "band1": {"t": t_multi, "y": y_flux1 + np.random.normal(0, 0.005, size=len(t_multi)), "y_err": np.ones_like(t_multi) * 0.005},
+        "band2": {"t": t_multi, "y": y_flux2 + np.random.normal(0, 0.005, size=len(t_multi)), "y_err": np.ones_like(t_multi) * 0.005}
+    }
+    res_achromatic = analyze_lightcurve(data_achromatic)
+    print("\nAchromatic Event Results:")
+    for a in res_achromatic["anomalies"]:
+        print(f"t0: {a['t0']:.2f}, chromatic: {a['chromatic_flag']}, ratio: {a['chromaticity_ratio']:.3f}")
+        assert not a["chromatic_flag"], "Achromatic event should have chromatic_flag = False"
+        assert abs(a["chromaticity_ratio"] - 1.0) < 0.2, "Achromatic ratio should be close to 1.0"
+
+    # Chromatic Event (Stellar Flare / CV / Systematic excursion only in band1, flat in band2)
+    data_chromatic = {
+        "band1": {"t": t_multi, "y": y_flux1 + np.random.normal(0, 0.005, size=len(t_multi)), "y_err": np.ones_like(t_multi) * 0.005},
+        "band2": {"t": t_multi, "y": 1.0 + np.random.normal(0, 0.005, size=len(t_multi)), "y_err": np.ones_like(t_multi) * 0.005} # completely flat
+    }
+    res_chromatic = analyze_lightcurve(data_chromatic)
+    print("\nChromatic Event Results:")
+    for a in res_chromatic["anomalies"]:
+        print(f"t0: {a['t0']:.2f}, chromatic: {a['chromatic_flag']}, ratio: {a['chromaticity_ratio']:.3f}")
+        assert a["chromatic_flag"], "Chromatic event should have chromatic_flag = True"
 
     # Test noise characterisation utility
     # Pure white noise test

@@ -254,10 +254,105 @@ def analyze_lightcurve(
         if not any(abs(p_odd["t0"] - p_e["t0"]) < 1.5 for p_e in all_anomalies):
             all_anomalies.append(p_odd)
 
-    # Chronological order; stamp the detection band
+    # Chronological order; stamp the detection band and compute chromaticity flags
     all_anomalies = sorted(all_anomalies, key=lambda x: x["t0"])
+
+    def get_paczynski_template(t, t0, tE, u0):
+        u = np.sqrt(u0**2 + ((t - t0) / tE)**2)
+        u = np.where(u > 1e-6, u, 1e-6)
+        A = (u**2 + 2.0) / (u * np.sqrt(u**2 + 4.0))
+        return A - 1.0
+
     for a in all_anomalies:
         a["band"] = primary_band
+        a["chromatic_flag"] = False
+        a["chromaticity_ratio"] = 1.0
+
+        t0 = a["t0"]
+        tE = a["tE"]
+        u0 = a["u0"] if (a["u0"] is not None and not np.isnan(a["u0"])) else 0.05
+
+        # Fit template on primary band to get base amplitude
+        p_t = p_data["t"]
+        p_y = y_cwt
+        p_err = p_data["y_err"]
+        p_w = 1.0 / (np.where(p_err > 1e-12, p_err, 1e-12)**2)
+
+        p_win = (p_t >= t0 - 5.0 * tE) & (p_t <= t0 + 5.0 * tE)
+        t_p = p_t[p_win]
+        y_p = p_y[p_win]
+        w_p = p_w[p_win]
+
+        if len(t_p) < 5:
+            t_p, y_p, w_p = p_t, p_y, p_w
+
+        S_p = get_paczynski_template(t_p, t0, tE, u0)
+        sum_wp = np.sum(w_p)
+        sum_wpS = np.sum(w_p * S_p)
+        sum_wpS2 = np.sum(w_p * S_p**2)
+        sum_wpy = np.sum(w_p * y_p)
+        sum_wpSy = np.sum(w_p * S_p * y_p)
+
+        det_p = sum_wpS2 * sum_wp - sum_wpS**2
+        Fs_primary = 0.0
+        if det_p > 1e-12:
+            Fs_primary = (sum_wpSy * sum_wp - sum_wpS * sum_wpy) / det_p
+        else:
+            Fs_primary = sum_wpSy / (sum_wpS2 + 1e-12)
+
+        Fs_primary_clean = Fs_primary if abs(Fs_primary) > 1e-6 else (1e-6 if Fs_primary >= 0 else -1e-6)
+
+        # Project onto other bands
+        for b, b_data in band_data.items():
+            if b == primary_band:
+                continue
+
+            b_t = b_data["t"]
+            if detrend_periodic:
+                b_y = b_data["y_detrended"] - 1.0 if "y_detrended" in b_data else b_data["y"] - 1.0
+            else:
+                b_baseline = float(np.percentile(b_data["y"], 20))
+                b_y = b_data["y"] - b_baseline
+
+            b_err = b_data["y_err"]
+            b_w = 1.0 / (np.where(b_err > 1e-12, b_err, 1e-12)**2)
+
+            b_win = (b_t >= t0 - 5.0 * tE) & (b_t <= t0 + 5.0 * tE)
+            t_b = b_t[b_win]
+            y_b = b_y[b_win]
+            w_b = b_w[b_win]
+
+            if len(t_b) >= 3:
+                S_b = get_paczynski_template(t_b, t0, tE, u0)
+                sum_wb = np.sum(w_b)
+                sum_wbS = np.sum(w_b * S_b)
+                sum_wbS2 = np.sum(w_b * S_b**2)
+                sum_wby = np.sum(w_b * y_b)
+                sum_wbSy = np.sum(w_b * S_b * y_b)
+
+                det_b = sum_wbS2 * sum_wb - sum_wbS**2
+                if det_b > 1e-12:
+                    Fs_b = (sum_wbSy * sum_wb - sum_wbS * sum_wby) / det_b
+                    Fb_b = (sum_wbS2 * sum_wby - sum_wbS * sum_wbSy) / det_b
+                else:
+                    Fs_b = sum_wbSy / (sum_wbS2 + 1e-12)
+                    Fb_b = sum_wby / (sum_wb + 1e-12)
+
+                y_model_b = Fs_b * S_b + Fb_b
+                chi2_lens_b = np.sum(w_b * (y_b - y_model_b)**2)
+                Fb_null_b = sum_wby / (sum_wb + 1e-12)
+                chi2_null_b = np.sum(w_b * (y_b - Fb_null_b)**2)
+                dchi2_b = chi2_null_b - chi2_lens_b
+
+                if dchi2_b >= 10.0:
+                    ratio = Fs_b / Fs_primary_clean
+                    a["chromaticity_ratio"] = float(ratio)
+                    if ratio < -0.1 or ratio > 3.0:
+                        a["chromatic_flag"] = True
+                else:
+                    if len(t_b) >= 5 and a.get("dchi2", 0.0) >= 50.0:
+                        a["chromaticity_ratio"] = 0.0
+                        a["chromatic_flag"] = True
 
     # ------------------------------------------------------------------
     # 7. Assemble output

@@ -188,7 +188,7 @@ def detect_cwt_peaks(
     y_obs_err=None,
     tE_scales=None,
     dt=0.02,
-    cwt_threshold=25.0,
+    cwt_threshold=12.0,
     t_grid=None,
     baseline_flux=None,
     interpolator="linear",

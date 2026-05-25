@@ -69,7 +69,7 @@ def analyze_lightcurve(
     min_period=1.0,
     max_period=10.0,
     dt=0.02,
-    cwt_threshold=25.0,
+    cwt_threshold=12.0,
     tE_scales=None,
     baseline_func=None,
     interpolator="linear",

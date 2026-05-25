@@ -163,10 +163,13 @@ def _tE_correction_factor(u0_event, u0_template=0.05):
     if u0_event is None or np.isnan(u0_event) or u0_event <= 0:
         return 1.0
 
+    # Clip u0 to the fitted interval [0.01, 1.0] to prevent polynomial divergence
+    u0_clipped = np.clip(u0_event, 0.01, 1.0)
+
     # Weighted degree-5 polynomial coefficients from numerical peak fitting:
     coeffs = [12.07074638, -29.26124165, 28.15495458, -18.91458072, 22.28322211, -0.06346686]
     poly = np.poly1d(coeffs)
-    r_val = poly(u0_event)
+    r_val = poly(u0_clipped)
     
     # Avoid division by zero or negative values
     if r_val < 0.01:

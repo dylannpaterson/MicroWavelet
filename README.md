@@ -35,6 +35,10 @@ It leverages Paczynski wavelet templates to identify transient signals (such as 
    - Provides a Nadaraya-Watson-like local Gaussian kernel interpolator weighted by $1/y_{\text{err}}^2$ as a robust alternative to standard linear interpolation.
    - Vectorized using `np.searchsorted` to only evaluate a local $\pm 4h$ sliding window (where $h = 2\cdot dt$) on active grid points, running in milliseconds and resisting high-uncertainty outliers.
 
+6. **Robust White & Red Noise Characterisation (`characterize_noise`)**:
+   - Analyzes time-series noise by computing robust white noise scatter (via first-difference MAD), lag-1 and lag-2 autocorrelation, and Pont-style binning scaling excess factors.
+   - Automatically flags segments with heavy correlated red noise to enable dynamic threshold scaling and error corrections.
+
 ---
 
 ## Installation

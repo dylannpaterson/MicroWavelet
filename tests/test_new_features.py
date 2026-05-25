@@ -1,5 +1,5 @@
 import numpy as np
-from microwavelet import analyze_lightcurve
+from microwavelet import analyze_lightcurve, characterize_noise
 
 def paczynski(t, t0, tE, u0, baseline=1.0):
     u = np.sqrt(u0**2 + ((t - t0)/tE)**2)
@@ -53,7 +53,29 @@ def test_new_features():
     
     res_filtered_keep = analyze_lightcurve(data, min_dchi2=10.0)
     assert len(res_filtered_keep["anomalies"]) > 0, "Low min_dchi2 should keep the anomalies"
-    
+
+    # Test noise characterisation utility
+    # Pure white noise test
+    t_noise = np.arange(0, 50, 0.1)
+    y_noise_white = np.random.normal(0, 0.05, size=len(t_noise))
+    metrics_white = characterize_noise(t_noise, y_noise_white)
+    print("\nWhite Noise Characterisation:")
+    print(f"Sigma White: {metrics_white['sigma_white']:.4f}, Total: {metrics_white['sigma_total']:.4f}")
+    print(f"Autocorr Lag 1: {metrics_white['autocorr_lag1']:.4f}, Has Red Noise: {metrics_white['has_red_noise']}")
+    assert abs(metrics_white["sigma_white"] - 0.05) < 0.015
+    assert not metrics_white["has_red_noise"], "White noise should not be flagged as red noise"
+
+    # Red noise test (correlated random walk / AR(1) process)
+    y_noise_red = np.zeros_like(t_noise)
+    for i in range(1, len(t_noise)):
+        y_noise_red[i] = 0.8 * y_noise_red[i-1] + np.random.normal(0, 0.03)
+    metrics_red = characterize_noise(t_noise, y_noise_red)
+    print("\nRed Noise Characterisation:")
+    print(f"Sigma White: {metrics_red['sigma_white']:.4f}, Total: {metrics_red['sigma_total']:.4f}")
+    print(f"Autocorr Lag 1: {metrics_red['autocorr_lag1']:.4f}, Has Red Noise: {metrics_red['has_red_noise']}")
+    print(f"Pont Excess (Bin 10): {metrics_red['pont_excess'].get(10, 1.0):.4f}")
+    assert metrics_red["has_red_noise"], "AR(1) correlated noise should be flagged as red noise"
+
     print("\nAll tests completed successfully!")
 
 if __name__ == "__main__":

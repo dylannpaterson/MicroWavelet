@@ -21,6 +21,20 @@ It leverages Paczynski wavelet templates to identify transient signals (such as 
      $$t_{E,\text{true}} = t_{E,\text{scan}} / r_{\text{peak}}(u_{0,\text{event}})$$
    - This keeps estimation errors **under 2%** across the entire physical range of $u_0$.
 
+3. **Analytical $\Delta\chi^2$ and $\Delta\text{BIC}$ Solver**:
+   - Performs a closed-form, unconstrained $2 \times 2$ weighted linear least-squares Paczynski fit ($y = F_s S + F_b$) locally in a $t_0 \pm 5 t_E$ window on the raw observed points.
+   - Computes parametric test statistics:
+     - $\Delta\chi^2 = \chi^2_{\text{null}} - \chi^2_{\text{lens}}$
+     - $\Delta\text{BIC} = \chi^2_{\text{lens}} - \chi^2_{\text{null}} + 2 \ln(N)$
+   - Allows high-throughput triage filtering using input parameter `min_dchi2`.
+
+4. **Boundary Proximity Artifact Suppression (`edge_flag`)**:
+   - Automatically identifies and flags potential rising edge/boundary artifacts by setting `edge_flag = True` if the peak time $t_0$ lies within $0.5 \cdot t_E$ of the start or end of the observation window.
+
+5. **Weighted Local Gaussian Kernel Regression (`interpolator="weighted"`)**:
+   - Provides a Nadaraya-Watson-like local Gaussian kernel interpolator weighted by $1/y_{\text{err}}^2$ as a robust alternative to standard linear interpolation.
+   - Vectorized using `np.searchsorted` to only evaluate a local $\pm 4h$ sliding window (where $h = 2\cdot dt$) on active grid points, running in milliseconds and resisting high-uncertainty outliers.
+
 ---
 
 ## Installation

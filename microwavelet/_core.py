@@ -72,6 +72,8 @@ def analyze_lightcurve(
     cwt_threshold=25.0,
     tE_scales=None,
     baseline_func=None,
+    interpolator="linear",
+    min_dchi2=None,
 ):
     """
     Robust, standalone CWT-based anomaly detector for multi-filter light curves.
@@ -114,6 +116,11 @@ def analyze_lightcurve(
     baseline_func : callable, optional
         Custom baseline model ``f(t, period, t0_offset) -> y`` for period
         fine-tuning.  Only relevant when ``detrend_periodic=True``.
+    interpolator : str
+        Choice of interpolator: "linear" or "weighted".
+        "weighted" performs a Nadaraya-Watson local Gaussian kernel regression.
+    min_dchi2 : float, optional
+        Minimum dchi2 threshold required for anomaly peaks.
 
     Returns
     -------
@@ -229,10 +236,13 @@ def analyze_lightcurve(
     cwt_results = detect_cwt_peaks(
         p_data["t"],
         y_cwt,
+        y_obs_err=p_data["y_err"],
         tE_scales=tE_scales,
         dt=dt,
         cwt_threshold=cwt_threshold,
         baseline_flux=cwt_baseline,
+        interpolator=interpolator,
+        min_dchi2=min_dchi2,
     )
 
     # ------------------------------------------------------------------

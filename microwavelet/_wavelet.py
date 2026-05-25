@@ -185,11 +185,14 @@ def _tE_correction_factor(u0_event, u0_template=0.05):
 def detect_cwt_peaks(
     t_obs,
     y_obs,
+    y_obs_err=None,
     tE_scales=None,
     dt=0.02,
     cwt_threshold=25.0,
     t_grid=None,
     baseline_flux=None,
+    interpolator="linear",
+    min_dchi2=None,
 ):
     """
     Scale-space CWT peak and dip finder using Paczynski wavelet kernels.
@@ -200,6 +203,8 @@ def detect_cwt_peaks(
         Observed times (days).
     y_obs : array-like
         Baseline-subtracted flux (so quiescent ≈ 0).
+    y_obs_err : array-like, optional
+        Observational uncertainties on y_obs. Used for weighted regression and dchi2.
     tE_scales : np.ndarray, optional
         Log-spaced grid of Einstein timescale scales to probe (days).
         Defaults to 120 scales from 0.02 to 200 days.
@@ -212,6 +217,12 @@ def detect_cwt_peaks(
     baseline_flux : float, optional
         Quiescent flux level *before* baseline subtraction.  Needed to
         compute magnification A and hence u0.  Pass None to skip u0 estimation.
+    interpolator : str
+        Choice of interpolator: "linear" or "weighted".
+        "weighted" performs a Nadaraya-Watson local Gaussian kernel regression
+        weighted by 1/y_obs_err^2.
+    min_dchi2 : float, optional
+        Minimum dchi2 (chi2_null - chi2_lens) required for a detection.
 
     Returns
     -------
@@ -226,6 +237,20 @@ def detect_cwt_peaks(
     """
     t_obs = np.asarray(t_obs)
     y_obs = np.asarray(y_obs)
+
+    # Sort observations by time to ensure searchsorted and interpolation work correctly
+    sort_idx = np.argsort(t_obs)
+    t_obs = t_obs[sort_idx]
+    y_obs = y_obs[sort_idx]
+    if y_obs_err is not None:
+        y_obs_err = np.asarray(y_obs_err)[sort_idx]
+
+    # Pre-calculate weights for weighted fitting and weighted interpolation
+    if y_obs_err is None:
+        w = np.ones_like(y_obs)
+    else:
+        err_clean = np.where((y_obs_err > 1e-12) & np.isfinite(y_obs_err), y_obs_err, 1e-12)
+        w = 1.0 / (err_clean ** 2)
 
     if tE_scales is None:
         tE_scales = np.logspace(np.log10(0.02), np.log10(200.0), 120)
@@ -244,6 +269,27 @@ def detect_cwt_peaks(
     f_interp = interpolate.interp1d(
         t_obs, y_obs, bounds_error=False, fill_value=(y_obs[0], y_obs[-1])
     )(t_grid)
+
+    if interpolator == "weighted":
+        h = 2.0 * dt
+        active_indices = np.where(grid_mask)[0]
+        left_idx = np.searchsorted(t_obs, t_grid[active_indices] - 4.0 * h, side="left")
+        right_idx = np.searchsorted(t_obs, t_grid[active_indices] + 4.0 * h, side="right")
+
+        for idx_in_active, g_idx in enumerate(active_indices):
+            l_idx = left_idx[idx_in_active]
+            r_idx = right_idx[idx_in_active]
+            if r_idx - l_idx > 0:
+                t_sub = t_obs[l_idx:r_idx]
+                y_sub = y_obs[l_idx:r_idx]
+                w_sub = w[l_idx:r_idx]
+
+                dts = t_sub - t_grid[g_idx]
+                kernel = np.exp(-0.5 * (dts / h) ** 2)
+                weighted_kernel = w_sub * kernel
+                sum_wk = np.sum(weighted_kernel)
+                if sum_wk > 1e-12:
+                    f_interp[g_idx] = np.sum(weighted_kernel * y_sub) / sum_wk
 
     n_scales = len(tE_scales)
     n_time = len(t_grid)
@@ -352,10 +398,10 @@ def detect_cwt_peaks(
 
             # Local extremum verification: must be a genuine local max or min
             # (not a CWT side-lobe ghost or edge slope).
-            w = max(2, int(0.1 * tE_scan / dt))
+            w_size = max(2, int(0.1 * tE_scan / dt))
             v_c = f_interp[p_idx]
-            v_l = f_interp[max(0, p_idx - w)]
-            v_r = f_interp[min(n_time - 1, p_idx + w)]
+            v_l = f_interp[max(0, p_idx - w_size)]
+            v_r = f_interp[min(n_time - 1, p_idx + w_size)]
 
             is_max = (v_c > v_l) and (v_c > v_r)
             is_min = (v_c < v_l) and (v_c < v_r)
@@ -376,6 +422,58 @@ def detect_cwt_peaks(
             # Refine tE using analytical bias correction (fast and robust).
             exact_tE = tE_scan * _tE_correction_factor(u0_est)
 
+            # Compute dchi2 and dbic analytically using weighted linear least-squares fit
+            u0_fit = u0_est if (u0_est is not None and not np.isnan(u0_est) and u0_est > 0) else 0.05
+            win_mask = (t_obs >= t_grid[p_idx] - 5.0 * exact_tE) & (t_obs <= t_grid[p_idx] + 5.0 * exact_tE)
+            t_win = t_obs[win_mask]
+            y_win = y_obs[win_mask]
+            w_win = w[win_mask]
+
+            if len(t_win) < 5:
+                # fall back to entire light curve
+                t_win = t_obs
+                y_win = y_obs
+                w_win = w
+
+            u_win = np.sqrt(u0_fit**2 + ((t_win - t_grid[p_idx]) / exact_tE)**2)
+            u_win = np.where(u_win > 1e-6, u_win, 1e-6)
+            A_win = (u_win**2 + 2.0) / (u_win * np.sqrt(u_win**2 + 4.0))
+            S_win = A_win - 1.0
+
+            sum_w = np.sum(w_win)
+            sum_wS = np.sum(w_win * S_win)
+            sum_wS2 = np.sum(w_win * S_win**2)
+            sum_wy = np.sum(w_win * y_win)
+            sum_wSy = np.sum(w_win * S_win * y_win)
+
+            det = sum_wS2 * sum_w - sum_wS**2
+            if det > 1e-12:
+                Fs = (sum_wSy * sum_w - sum_wS * sum_wy) / det
+                Fb = (sum_wS2 * sum_wy - sum_wS * sum_wSy) / det
+            else:
+                Fs = 0.0
+                Fb = sum_wy / (sum_w + 1e-12)
+
+            # Model chi2
+            y_model = Fs * S_win + Fb
+            chi2_lens = np.sum(w_win * (y_win - y_model)**2)
+
+            # Null chi2
+            Fb_null = sum_wy / (sum_w + 1e-12)
+            chi2_null = np.sum(w_win * (y_win - Fb_null)**2)
+
+            dchi2 = chi2_null - chi2_lens
+            N_pts = len(t_win)
+            dbic = chi2_lens - chi2_null + 2.0 * np.log(N_pts)
+
+            # Boundary proximity edge flag
+            t0 = float(t_grid[p_idx])
+            edge_flag = bool((t0 < t_obs[0] + 0.5 * exact_tE) or (t0 > t_obs[-1] - 0.5 * exact_tE))
+
+            # Apply min_dchi2 filtering if specified
+            if min_dchi2 is not None and dchi2 < min_dchi2:
+                continue
+
             found.append({
                 "t0":       float(t_grid[p_idx]),
                 "tE":       float(exact_tE),
@@ -386,6 +484,9 @@ def detect_cwt_peaks(
                 "symmetry": float(sym),
                 "type":     "dip" if is_min else "peak",
                 "gamma":    float(gamma_global),      # noise-floor estimated gamma
+                "dchi2":    float(dchi2),
+                "dbic":     float(dbic),
+                "edge_flag": edge_flag,
             })
 
         return found, consensus_1d, norm_map

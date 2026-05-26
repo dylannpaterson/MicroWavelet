@@ -92,7 +92,7 @@ jobs:
               git log --pretty=format:'- %s (%h)'
             fi
           } > "${notes_path}"
-          if [ "$(wc -l < "${notes_path}")" -le 2 ]; then
+          if ! grep -q '^- ' "${notes_path}"; then
             echo "- Initial release." >> "${notes_path}"
           fi
           echo "path=${notes_path}" >> "$GITHUB_OUTPUT"

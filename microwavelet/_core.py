@@ -196,6 +196,7 @@ def analyze_lightcurve(
 
         detrending_out = {
             "period_days": detrending_info["period_days"],
+            "search_mask": detrending_info.get("search_mask"),
             "period_search": detrending_info["period_search"],
             "bands": {
                 b: {

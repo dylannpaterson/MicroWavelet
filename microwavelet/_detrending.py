@@ -7,17 +7,19 @@ Pipeline
 --------
 1. find_shared_period        – Lomb-Scargle period search on the primary band
 2. fit_periodic_gp_robust    – Iterative sigma-clipping GPR on phase-folded data
-3. resolve_half_period_alias – χ² comparison P vs 2P to catch EB/CV aliases
-4. fine_tune_period          – Non-linear period fine-tuning via scipy.optimize
+3. resolve_fundamental_period – Bayesian Occam's Razor to find fundamental period
+4. fine_tune_period          – GP-based period optimization
 5. detrend_light_curve_periodic – Orchestrates 1-4 across all bands
 """
 
 import numpy as np
+import warnings
 from scipy import optimize
 from scipy.stats import median_abs_deviation
 from astropy.timeseries import LombScargle
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ExpSineSquared, ConstantKernel as C
+from sklearn.exceptions import ConvergenceWarning
 
 
 # ---------------------------------------------------------------------------
@@ -26,33 +28,61 @@ from sklearn.gaussian_process.kernels import ExpSineSquared, ConstantKernel as C
 
 def find_shared_period(t, y, dy, min_period=1.0, max_period=10.0):
     """
-    Finds the dominant periodic baseline modulation using Lomb-Scargle.
-
-    Parameters
-    ----------
-    t, y, dy : array-like
-        Times, fluxes, and flux uncertainties for the primary band.
-    min_period, max_period : float
-        Search bounds in days.
+    Finds the dominant periodic baseline modulation using Lomb-Scargle
+    plus a robust harmonic (PDM) check to avoid transient bias and aliases.
 
     Returns
     -------
     best_period : float
     frequency : np.ndarray
     power : np.ndarray
+    clean_mask : np.ndarray[bool]
+        Mask where True means data was kept (not clipped as transient).
     """
     t = np.asarray(t)
     y = np.asarray(y)
     dy = np.asarray(dy)
 
-    frequency, power = LombScargle(t, y, dy).autopower(
+    # 1. Aggressive pre-clipping for period search (2.5 sigma MAD)
+    # This prevents high-amplitude ML events from biasing the initial search.
+    mad = median_abs_deviation(y)
+    sigma = 1.4826 * mad if mad > 0 else np.std(y)
+    clean_mask = y < np.median(y) + 2.5 * sigma
+    
+    t_c, y_c, dy_c = t[clean_mask], y[clean_mask], dy[clean_mask]
+    
+    if len(t_c) < 20:
+        t_c, y_c, dy_c = t, y, dy
+        clean_mask = np.ones_like(y, dtype=bool)
+
+    # 2. Initial LS search
+    frequency, power = LombScargle(t_c, y_c, dy_c).autopower(
         minimum_frequency=1.0 / max_period,
         maximum_frequency=1.0 / min_period,
         samples_per_peak=10,
     )
-    best_freq = frequency[np.argmax(power)]
-    best_period = 1.0 / best_freq
-    return best_period, frequency, power
+    p_ls = 1.0 / frequency[np.argmax(power)]
+
+    # 3. Robust Harmonic Check (PDM scoring)
+    # We test P/2, P, and 2P to find the fundamental that folds cleanest.
+    def get_pdm_score(p):
+        if p < min_period or p > max_period:
+            return 1e10
+        phase = (t_c % p) / p
+        # Simple binned MAD score: lower is better
+        bins = np.linspace(0.0, 1.0, 20)
+        scatters = []
+        for i in range(len(bins)-1):
+            m = (phase >= bins[i]) & (phase < bins[i+1])
+            if np.sum(m) > 2:
+                scatters.append(median_abs_deviation(y_c[m]))
+        return np.mean(scatters) if scatters else 1e10
+
+    candidates = [p_ls, 0.5 * p_ls, 2.0 * p_ls]
+    scores = [get_pdm_score(c) for c in candidates]
+    best_period = candidates[np.argmin(scores)]
+
+    return best_period, frequency, power, clean_mask
 
 
 # ---------------------------------------------------------------------------
@@ -65,17 +95,6 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=120, max_iter=4, sigma_cl
 
     Uses iterative sigma-clipping (positive outliers only) to identify and
     protect transient microlensing brightening from being fitted as baseline.
-
-    Parameters
-    ----------
-    t, y, y_err : array-like
-    period : float
-    n_bins : int
-        Number of phase bins for initial GP training data.
-    max_iter : int
-        Maximum sigma-clipping iterations.
-    sigma_clip : float
-        Sigma threshold for clipping (asymmetric: only positive outliers).
 
     Returns
     -------
@@ -151,7 +170,11 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=120, max_iter=4, sigma_cl
             n_restarts_optimizer=5,
             random_state=42,
         )
-        gp.fit(x_spline[:, np.newaxis], y_spline)
+        
+        # Suppress convergence warnings during repeated fits
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ConvergenceWarning)
+            gp.fit(x_spline[:, np.newaxis], y_spline)
 
         y_model = gp.predict(phase[:, np.newaxis])
         residuals = y - y_model
@@ -173,42 +196,57 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=120, max_iter=4, sigma_cl
 # 3. Alias resolution
 # ---------------------------------------------------------------------------
 
-def resolve_half_period_alias(t, y, y_err, period, mask):
+def resolve_fundamental_period(t, y, y_err, period, mask, min_period=1.0, max_period=10.0):
     """
-    Resolves the eclipsing binary / CV half-period alias via χ² comparison.
+    Finds the fundamental period by iteratively doubling and halving 
+    candidates using Bayesian Log-Marginal Likelihood (LML).
 
-    Restricted to the first 300 days to eliminate phase drift from long
-    baseline observations.
-
-    Returns
-    -------
-    float : The resolved period (either ``period`` or ``2 * period``).
+    1. Doubling: Try to find the full orbital cycle where complex shapes
+       (e.g., ellipsoidal + eclipses) are fully resolved.
+    2. Halving: Apply Aggressive Occam's Razor to find the simplest fundamental.
     """
-    t = np.asarray(t)
-    y = np.asarray(y)
-    y_err = np.asarray(y_err)
-    mask = np.asarray(mask)
+    t_f, y_f, ye_f = np.asarray(t)[mask], np.asarray(y)[mask], np.asarray(y_err)[mask]
+    
+    def get_gp_evidence(p):
+        if p < min_period or p > max_period:
+            return -1e20
+        try:
+            # We use max_iter=2 for a reasonably converged fit
+            gp, phase, m = fit_periodic_gp_robust(t_f, y_f, ye_f, p, max_iter=2)
+            return gp.log_marginal_likelihood(gp.kernel_.theta)
+        except:
+            return -1e20
 
-    local_mask = (t < t.min() + 300.0) & mask
-    if np.sum(local_mask) < 20:
-        return period
+    current_p = period
+    current_lml = get_gp_evidence(current_p)
 
-    t_l, y_l, ye_l = t[local_mask], y[local_mask], y_err[local_mask]
+    # 1. Iterative Doubling
+    # We double as long as it's significantly better (Delta LML > 5).
+    for _ in range(3):
+        double_p = 2.0 * current_p
+        if double_p > max_period:
+            break
+        double_lml = get_gp_evidence(double_p)
+        if double_lml > (current_lml + 5.0):
+            current_p = double_p
+            current_lml = double_lml
+        else:
+            break
 
-    try:
-        gp_P, phase_P, _ = fit_periodic_gp_robust(t_l, y_l, ye_l, period, max_iter=2)
-        chi2_P = np.sum(((y_l - gp_P.predict(phase_P[:, np.newaxis])) / ye_l) ** 2)
-
-        double_period = 2.0 * period
-        gp_2P, phase_2P, _ = fit_periodic_gp_robust(t_l, y_l, ye_l, double_period, max_iter=2)
-        chi2_2P = np.sum(((y_l - gp_2P.predict(phase_2P[:, np.newaxis])) / ye_l) ** 2)
-
-        if chi2_P - chi2_2P > 20.0:
-            return double_period
-    except Exception:
-        pass
-
-    return period
+    # 2. Iterative Halving (Aggressive Occam's Razor)
+    # We prefer the shorter period unless it's much worse (Delta LML < -10).
+    for _ in range(3):
+        half_p = 0.5 * current_p
+        if half_p < min_period:
+            break
+        half_lml = get_gp_evidence(half_p)
+        if half_lml > (current_lml - 10.0):
+            current_p = half_p
+            current_lml = half_lml
+        else:
+            break
+            
+    return current_p
 
 
 # ---------------------------------------------------------------------------
@@ -217,60 +255,35 @@ def resolve_half_period_alias(t, y, y_err, period, mask):
 
 def fine_tune_period(t, y, y_err, initial_period, mask, baseline_func=None):
     """
-    Fine-tunes the period via non-linear optimisation on the unmasked baseline.
-
-    Parameters
-    ----------
-    baseline_func : callable, optional
-        Custom baseline model ``f(t, period, t0_offset) -> y``.
-        If None, assumes a simple harmonic sine.
-
-    Returns
-    -------
-    float : Optimised period (falls back to ``initial_period`` on failure).
+    Fine-tunes the period by minimizing the residual RMS of a full 
+    robust periodic GP fit to the phase-folded data.
     """
-    t = np.asarray(t)
-    y = np.asarray(y)
-    y_err = np.asarray(y_err)
-    mask = np.asarray(mask)
-
-    t_fit, y_fit, ye_fit = t[mask], y[mask], y_err[mask]
-    if len(t_fit) < 20:
+    t_fit = np.asarray(t)
+    y_fit = np.asarray(y)
+    ye_fit = np.asarray(y_err)
+    
+    if len(t_fit[mask]) < 20:
         return initial_period
 
-    if baseline_func is None:
-        def loss(params):
-            period, amp, phase_shift, offset = params
-            if period < 0.1:
-                return 1e10
-            model = offset + amp * np.sin(2.0 * np.pi * t_fit / period + phase_shift)
-            return np.sum(((y_fit - model) / ye_fit) ** 2)
-
-        p_init = [initial_period, np.std(y_fit) * np.sqrt(2), 0.0, 1.0]
-        bounds = [
-            (initial_period * 0.95, initial_period * 1.05),
-            (1e-4, 0.5),
-            (-2.0 * np.pi, 2.0 * np.pi),
-            (0.8, 1.2),
-        ]
-    else:
-        def loss(params):
-            period, t0_offset = params
-            if period < 0.1:
-                return 1e10
-            return np.sum(((y_fit - baseline_func(t_fit, period, t0_offset)) / ye_fit) ** 2)
-
-        p_init = [initial_period, 0.0]
-        bounds = [
-            (initial_period * 0.98, initial_period * 1.02),
-            (-initial_period, initial_period),
-        ]
+    def objective(p):
+        if p <= 0: return 1e10
+        try:
+            gp, phase, m = fit_periodic_gp_robust(t_fit, y_fit, ye_fit, p, max_iter=2)
+            y_pred = gp.predict(phase[:, np.newaxis])
+            return np.sqrt(np.mean((y_fit[m] - y_pred[m])**2))
+        except:
+            return 1e10
 
     try:
-        res = optimize.minimize(loss, p_init, method="L-BFGS-B", bounds=bounds)
+        res = optimize.minimize_scalar(
+            objective, 
+            bounds=(initial_period * 0.90, initial_period * 1.10), 
+            method='bounded',
+            options={'xatol': 1e-6}
+        )
         if res.success:
-            return res.x[0]
-    except Exception:
+            return res.x
+    except:
         pass
 
     return initial_period
@@ -283,38 +296,13 @@ def fine_tune_period(t, y, y_err, initial_period, mask, baseline_func=None):
 def detrend_light_curve_periodic(band_data, min_period=1.0, max_period=10.0, baseline_func=None):
     """
     Full periodic baseline detrending pipeline for multi-filter observations.
-
-    Steps
-    -----
-    1. Joint Lomb-Scargle period search on the highest-cadence band.
-    2. Rough mask via sigma-clipping GPR to protect microlensing transients.
-    3. Orbital alias resolution (P vs 2P).
-    4. Non-linear period fine-tuning.
-    5. Per-band robust GPR detrending and division.
-
-    Parameters
-    ----------
-    band_data : dict
-        ``{band_name: {"t": ..., "y": ..., "y_err": ...}}``
-    min_period, max_period : float
-        Period search bounds (days).
-    baseline_func : callable, optional
-        Custom baseline model for period fine-tuning.
-
-    Returns
-    -------
-    detrended_bands : dict
-        Per-band dict with keys:
-        ``t, y_raw, y_detrended, y_err, baseline_model, phase, outlier_mask``
-    detrending_info : dict
-        ``{period_days, period_search: {initial_ls, alias_resolved, optimized}}``
     """
     # Primary band = most data points
     primary_band = max(band_data, key=lambda b: len(band_data[b]["t"]))
     p = band_data[primary_band]
 
     # 1. Lomb-Scargle period search
-    ls_period, _, _ = find_shared_period(
+    ls_period, _, _, search_mask = find_shared_period(
         p["t"], p["y"], p["y_err"],
         min_period=min_period, max_period=max_period,
     )
@@ -323,7 +311,7 @@ def detrend_light_curve_periodic(band_data, min_period=1.0, max_period=10.0, bas
     _, _, rough_mask = fit_periodic_gp_robust(p["t"], p["y"], p["y_err"], ls_period, max_iter=3)
 
     # 3. Alias resolution
-    resolved_period = resolve_half_period_alias(p["t"], p["y"], p["y_err"], ls_period, rough_mask)
+    resolved_period = resolve_fundamental_period(p["t"], p["y"], p["y_err"], ls_period, rough_mask)
 
     # 4. Fine-tune
     optimized_period = fine_tune_period(
@@ -350,11 +338,12 @@ def detrend_light_curve_periodic(band_data, min_period=1.0, max_period=10.0, bas
             "y_err": y_err_scaled,
             "baseline_model": baseline_model,
             "phase": phase,
-            "outlier_mask": mask,   # True = kept (not sigma-clipped as transient)
+            "outlier_mask": mask,
         }
 
     detrending_info = {
         "period_days": optimized_period,
+        "search_mask": search_mask,
         "period_search": {
             "initial_ls": ls_period,
             "alias_resolved": resolved_period,

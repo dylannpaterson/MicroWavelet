@@ -17,10 +17,11 @@ def generate_plot():
     plt.rcParams['ytick.color'] = '#4a4a4a'
     
     # 1. Generate synthetic achromatic microlensing data
-    t = np.arange(0, 100, 0.1)
-    t0 = 50.0
-    tE = 10.0
-    u0 = 0.1
+    # Expanded time range and adjusted parameters to ensure full event visibility
+    t = np.arange(0, 150, 0.2)
+    t0 = 75.0
+    tE = 15.0
+    u0 = 0.3
     
     # Paczynski amplification excess
     u = np.sqrt(u0**2 + ((t - t0) / tE)**2)
@@ -29,23 +30,26 @@ def generate_plot():
     
     np.random.seed(42)
     
-    # Primary Band (F146) with lensed peak and small noise
-    y_f146 = S + np.random.normal(0, 0.008, size=len(t))
-    y_err_f146 = np.ones_like(t) * 0.008
+    # Primary Band (F146) with lensed peak and realistic moderate noise
+    noise_f146 = 0.02
+    y_f146 = S + np.random.normal(0, noise_f146, size=len(t))
+    y_err_f146 = np.ones_like(t) * noise_f146
     
-    # Secondary Band (F087) with lensed peak and larger cadence
-    t_f087 = np.arange(0, 100, 0.5)
+    # Secondary Band (F087) with lensed peak and larger cadence/noise
+    t_f087 = np.arange(0, 150, 0.8)
     u_f087 = np.sqrt(u0**2 + ((t_f087 - t0) / tE)**2)
     S_f087 = (u_f087**2 + 2.0) / (u_f087 * np.sqrt(u_f087**2 + 4.0)) - 1.0
-    y_f087 = S_f087 + np.random.normal(0, 0.012, size=len(t_f087))
-    y_err_f087 = np.ones_like(t_f087) * 0.012
+    noise_f087 = 0.03
+    y_f087 = S_f087 + np.random.normal(0, noise_f087, size=len(t_f087))
+    y_err_f087 = np.ones_like(t_f087) * noise_f087
     
     # 2. Run the CWT Pipeline
+    # dt=0.1 is chosen to be half the primary cadence (0.2) to avoid interpolation artifacts
     data = {
         "F146": {"t": t, "y": y_f146 + 1.0, "y_err": y_err_f146}, # shift quiescent to 1.0
         "F087": {"t": t_f087, "y": y_f087 + 1.0, "y_err": y_err_f087}
     }
-    results = analyze_lightcurve(data, interpolator="weighted", cwt_threshold=12.0)
+    results = analyze_lightcurve(data, interpolator="weighted", dt=0.1, cwt_threshold=12.0)
     
     # Extract diagnostics for plotting
     diag = results["diagnostics"]["cwt"]
@@ -71,7 +75,7 @@ def generate_plot():
     if results["anomalies"]:
         anom = results["anomalies"][0]
         # Reconstruct fitted curve
-        fit_t = np.linspace(20, 80, 500)
+        fit_t = np.linspace(t.min(), t.max(), 500)
         fit_u = np.sqrt(anom["u0"]**2 + ((fit_t - anom["t0"]) / anom["tE"])**2)
         fit_A = (fit_u**2 + 2.0) / (fit_u * np.sqrt(fit_u**2 + 4.0))
         ax1.plot(fit_t, fit_A, color='#2ecc71', label=f'Best-Fit Paczynski ($t_E={anom["tE"]:.2f}$ d)', linewidth=2.0)
@@ -81,7 +85,7 @@ def generate_plot():
     ax1.set_title("MicroWavelet: CWT Detection & Parametric Fit Demonstration", fontsize=14, fontweight='bold', pad=15)
     ax1.legend(loc="upper right", frameon=True, facecolor='#ffffff', edgecolor='#e1e4e6')
     ax1.grid(True, linestyle=':', alpha=0.5)
-    ax1.set_ylim(0.9, 2.2)
+    ax1.set_ylim(0.8, 3.5)
     
     # Panel 2: CWT Scale-Space Consensus SNR
     ax2.plot(t_grid, c1d_even, color='#9b59b6', label='Even (Symmetric) Consensus SNR', linewidth=1.8)
@@ -95,7 +99,10 @@ def generate_plot():
     ax2.set_ylabel("CWT Consensus Z-Score (SNR)", fontsize=11, fontweight='bold')
     ax2.legend(loc="upper right", frameon=True, facecolor='#ffffff', edgecolor='#e1e4e6')
     ax2.grid(True, linestyle=':', alpha=0.5)
-    ax2.set_ylim(-3, 35)
+    
+    # Sensible Y-limits for SNR to show noise floor and peak clearly
+    snr_peak = results["anomalies"][0]["snr"] if results["anomalies"] else 40
+    ax2.set_ylim(-5, max(45, snr_peak * 1.2))
     
     # Beautiful styling details
     for ax in [ax1, ax2]:

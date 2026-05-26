@@ -77,12 +77,15 @@ For observations of variable stars (e.g., RR Lyrae, eclipsing binaries), the lib
 
 ## Installation
 
+### From PyPI (Standard)
+You can install the stable release of `microwavelet` directly from PyPI:
 ```bash
-pip install MicroWavelet
+pip install microwavelet
 ```
 
-For development from source:
+### From Source (Local Development)
 
+Clone the repository and install in editable mode:
 ```bash
 git clone https://github.com/dylannpaterson/MicroWavelet.git
 cd MicroWavelet

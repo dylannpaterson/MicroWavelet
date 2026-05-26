@@ -166,12 +166,10 @@ def analyze_lightcurve(
     elif isinstance(time_series, dict):
         for b, data in time_series.items():
             if not {"t", "y", "y_err"}.issubset(data.keys()):
-                raise ValueError(
-                    f"Band '{b}' dict must contain keys: 't', 'y', 'y_err'"
-                )
+                raise ValueError(f"Band '{b}' dict must contain keys: 't', 'y', 'y_err'")
             band_data[b] = {
-                "t":     np.asarray(data["t"]),
-                "y":     np.asarray(data["y"]),
+                "t": np.asarray(data["t"]),
+                "y": np.asarray(data["y"]),
                 "y_err": np.asarray(data["y_err"]),
             }
     else:
@@ -212,13 +210,13 @@ def analyze_lightcurve(
             "period_search": detrending_info["period_search"],
             "bands": {
                 b: {
-                    "t":              d["t"],
-                    "y_raw":          d["y_raw"],
-                    "y_detrended":    d["y_detrended"],
-                    "y_err":          d["y_err"],
+                    "t": d["t"],
+                    "y_raw": d["y_raw"],
+                    "y_detrended": d["y_detrended"],
+                    "y_err": d["y_err"],
                     "baseline_model": d["baseline_model"],
-                    "phase":          d["phase"],
-                    "outlier_mask":   d["outlier_mask"],
+                    "phase": d["phase"],
+                    "outlier_mask": d["outlier_mask"],
                 }
                 for b, d in detrended_bands.items()
             },
@@ -293,7 +291,7 @@ def analyze_lightcurve(
     all_anomalies = sorted(deduped, key=lambda x: x["t0"])
 
     def get_paczynski_template(t, t0, tE, u0):
-        u = np.sqrt(u0**2 + ((t - t0) / tE)**2)
+        u = np.sqrt(u0**2 + ((t - t0) / tE) ** 2)
         u = np.where(u > 1e-6, u, 1e-6)
         A = (u**2 + 2.0) / (u * np.sqrt(u**2 + 4.0))
         return A - 1.0
@@ -311,7 +309,7 @@ def analyze_lightcurve(
         p_t = p_data["t"]
         p_y = y_cwt
         p_err = p_data["y_err"]
-        p_w = 1.0 / (np.where(p_err > 1e-12, p_err, 1e-12)**2)
+        p_w = 1.0 / (np.where(p_err > 1e-12, p_err, 1e-12) ** 2)
 
         p_win = (p_t >= t0 - 5.0 * tE) & (p_t <= t0 + 5.0 * tE)
         t_p = p_t[p_win]
@@ -335,7 +333,9 @@ def analyze_lightcurve(
         else:
             Fs_primary = sum_wpSy / (sum_wpS2 + 1e-12)
 
-        Fs_primary_clean = Fs_primary if abs(Fs_primary) > 1e-6 else (1e-6 if Fs_primary >= 0 else -1e-6)
+        Fs_primary_clean = (
+            Fs_primary if abs(Fs_primary) > 1e-6 else (1e-6 if Fs_primary >= 0 else -1e-6)
+        )
 
         # Project onto other bands
         for b, b_data in band_data.items():
@@ -350,7 +350,7 @@ def analyze_lightcurve(
                 b_y = b_data["y"] - b_baseline
 
             b_err = b_data["y_err"]
-            b_w = 1.0 / (np.where(b_err > 1e-12, b_err, 1e-12)**2)
+            b_w = 1.0 / (np.where(b_err > 1e-12, b_err, 1e-12) ** 2)
 
             b_win = (b_t >= t0 - 5.0 * tE) & (b_t <= t0 + 5.0 * tE)
             t_b = b_t[b_win]
@@ -374,9 +374,9 @@ def analyze_lightcurve(
                     Fb_b = sum_wby / (sum_wb + 1e-12)
 
                 y_model_b = Fs_b * S_b + Fb_b
-                chi2_lens_b = np.sum(w_b * (y_b - y_model_b)**2)
+                chi2_lens_b = np.sum(w_b * (y_b - y_model_b) ** 2)
                 Fb_null_b = sum_wby / (sum_wb + 1e-12)
-                chi2_null_b = np.sum(w_b * (y_b - Fb_null_b)**2)
+                chi2_null_b = np.sum(w_b * (y_b - Fb_null_b) ** 2)
                 dchi2_b = chi2_null_b - chi2_lens_b
 
                 if dchi2_b >= 10.0:
@@ -411,8 +411,10 @@ def analyze_lightcurve(
     if stamp_dir is not None and len(all_anomalies) > 0:
         try:
             import os
+
             import matplotlib
-            matplotlib.use('Agg')  # Non-interactive backend
+
+            matplotlib.use("Agg")  # Non-interactive backend
             import matplotlib.pyplot as plt
 
             # 1. Determine clip boundaries
@@ -422,29 +424,29 @@ def analyze_lightcurve(
             t_end = max(t_ends)
 
             # 2. Setup Figure
-            plt.rcParams['font.family'] = 'sans-serif'
-            plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Inter']
-            
+            plt.rcParams["font.family"] = "sans-serif"
+            plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "Arial", "Inter"]
+
             fig, ax = plt.subplots(figsize=(10, 6), dpi=200)
-            fig.patch.set_facecolor('#ffffff')
-            ax.set_facecolor('#f8f9fa')
-            
+            fig.patch.set_facecolor("#ffffff")
+            ax.set_facecolor("#f8f9fa")
+
             # Styling spines
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            ax.spines['left'].set_color('#cccccc')
-            ax.spines['bottom'].set_color('#cccccc')
-            ax.grid(True, linestyle=':', alpha=0.5)
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.spines["left"].set_color("#cccccc")
+            ax.spines["bottom"].set_color("#cccccc")
+            ax.grid(True, linestyle=":", alpha=0.5)
 
             # Beautiful color palette
             palette = ["#3498db", "#e74c3c", "#2ecc71", "#f1c40f", "#9b59b6", "#1abc9c", "#e67e22"]
-            markers = ['o', 's', '^', 'D', 'v', 'p', '*']
+            markers = ["o", "s", "^", "D", "v", "p", "*"]
 
             # 3. Plot each filter/band
             for idx, (b_name, b_data) in enumerate(sorted(band_data.items())):
                 color = palette[idx % len(palette)]
                 marker = markers[idx % len(markers)]
-                
+
                 t_arr = np.asarray(b_data["t"])
                 if "y" in b_data:
                     y_arr = np.asarray(b_data["y"])
@@ -453,50 +455,61 @@ def analyze_lightcurve(
                 else:
                     y_arr = np.asarray(b_data["y_raw"])
                 y_err_arr = np.asarray(b_data["y_err"])
-                
+
                 # Clip data to window [t_start, t_end]
                 mask = (t_arr >= t_start) & (t_arr <= t_end)
                 if np.sum(mask) == 0:
                     continue
-                
+
                 ax.errorbar(
-                    t_arr[mask], 
-                    y_arr[mask], 
-                    yerr=y_err_arr[mask], 
-                    fmt=marker, 
-                    color=color, 
-                    markersize=4, 
-                    alpha=0.7, 
-                    elinewidth=0.6, 
+                    t_arr[mask],
+                    y_arr[mask],
+                    yerr=y_err_arr[mask],
+                    fmt=marker,
+                    color=color,
+                    markersize=4,
+                    alpha=0.7,
+                    elinewidth=0.6,
                     capsize=0,
-                    label=b_name
+                    label=b_name,
                 )
 
             # 4. Draw peak indicators
             for a in all_anomalies:
-                ax.axvline(a["t0"], color='#2c3e50', linestyle='--', linewidth=1.2, alpha=0.8)
+                ax.axvline(a["t0"], color="#2c3e50", linestyle="--", linewidth=1.2, alpha=0.8)
                 label_text = f"Peak: $t_0$={a['t0']:.2f}\n$t_E$={a['tE']:.1f}d\nSNR={a['snr']:.1f}σ"
                 # Place label neatly
                 ax.text(
-                    a["t0"] + 0.05 * (t_end - t_start), 
-                    ax.get_ylim()[0] + 0.7 * (ax.get_ylim()[1] - ax.get_ylim()[0]), 
-                    label_text, 
-                    fontsize=9, 
-                    color='#2c3e50', 
-                    bbox=dict(facecolor='#ffffff', alpha=0.8, edgecolor='#cccccc', boxstyle='round,pad=0.3'),
-                    zorder=5
+                    a["t0"] + 0.05 * (t_end - t_start),
+                    ax.get_ylim()[0] + 0.7 * (ax.get_ylim()[1] - ax.get_ylim()[0]),
+                    label_text,
+                    fontsize=9,
+                    color="#2c3e50",
+                    bbox=dict(
+                        facecolor="#ffffff",
+                        alpha=0.8,
+                        edgecolor="#cccccc",
+                        boxstyle="round,pad=0.3",
+                    ),
+                    zorder=5,
                 )
 
-            ax.set_xlabel("Time (BJD / Days)", fontsize=11, fontweight='bold', labelpad=10)
-            ax.set_ylabel("Relative Flux", fontsize=11, fontweight='bold', labelpad=10)
+            ax.set_xlabel("Time (BJD / Days)", fontsize=11, fontweight="bold", labelpad=10)
+            ax.set_ylabel("Relative Flux", fontsize=11, fontweight="bold", labelpad=10)
             ax.set_xlim(t_start, t_end)
-            ax.set_title("MicroWavelet: Detailed Anomaly Detections", fontsize=13, fontweight='bold', pad=15, loc='left')
-            ax.legend(loc="upper right", frameon=True, facecolor='#ffffff', edgecolor='#cccccc')
-            
+            ax.set_title(
+                "MicroWavelet: Detailed Anomaly Detections",
+                fontsize=13,
+                fontweight="bold",
+                pad=15,
+                loc="left",
+            )
+            ax.legend(loc="upper right", frameon=True, facecolor="#ffffff", edgecolor="#cccccc")
+
             # Save file
             os.makedirs(stamp_dir, exist_ok=True)
             out_path = os.path.join(stamp_dir, "stamp_peaks.png")
-            plt.savefig(out_path, bbox_inches='tight', facecolor='#ffffff')
+            plt.savefig(out_path, bbox_inches="tight", facecolor="#ffffff")
             plt.close(fig)
             print(f"✅ Anomaly stamp plot successfully saved to {out_path}")
         except Exception as e:
@@ -511,14 +524,14 @@ def analyze_lightcurve(
         "diagnostics": {
             "primary_band": primary_band,
             "cwt": {
-                "t_grid":            cwt_results["t_grid"],
-                "f_interp":          cwt_results["f_interp"],
-                "grid_mask":         cwt_results["grid_mask"],
+                "t_grid": cwt_results["t_grid"],
+                "f_interp": cwt_results["f_interp"],
+                "grid_mask": cwt_results["grid_mask"],
                 "consensus_1d_even": cwt_results["consensus_1d_even"],
-                "consensus_1d_odd":  cwt_results["consensus_1d_odd"],
-                "norm_map_even":     cwt_results["norm_map_even"],
-                "norm_map_odd":      cwt_results["norm_map_odd"],
-                "tE_scales":         cwt_results["tE_scales"],
+                "consensus_1d_odd": cwt_results["consensus_1d_odd"],
+                "norm_map_even": cwt_results["norm_map_even"],
+                "norm_map_odd": cwt_results["norm_map_odd"],
+                "tE_scales": cwt_results["tE_scales"],
             },
         },
     }

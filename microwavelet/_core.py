@@ -79,6 +79,7 @@ def analyze_lightcurve(
     baseline_func=None,
     interpolator="linear",
     min_dchi2=None,
+    stamp_dir=None,
 ):
     """
     Robust, standalone CWT-based anomaly detector for multi-filter light curves.
@@ -359,6 +360,99 @@ def analyze_lightcurve(
                     if len(t_b) >= 5 and a.get("dchi2", 0.0) >= 50.0:
                         a["chromaticity_ratio"] = 0.0
                         a["chromatic_flag"] = True
+
+
+    # ------------------------------------------------------------------
+    # 6.5. Generate Stamp Plot if stamp_dir is supplied and peaks detected
+    # ------------------------------------------------------------------
+    if stamp_dir is not None and len(all_anomalies) > 0:
+        try:
+            import os
+            import matplotlib
+            matplotlib.use('Agg')  # Non-interactive backend
+            import matplotlib.pyplot as plt
+
+            # 1. Determine clip boundaries
+            t_starts = [a["t0"] - 5.0 * a["tE"] for a in all_anomalies]
+            t_ends = [a["t0"] + 5.0 * a["tE"] for a in all_anomalies]
+            t_start = min(t_starts)
+            t_end = max(t_ends)
+
+            # 2. Setup Figure
+            plt.rcParams['font.family'] = 'sans-serif'
+            plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Inter']
+            
+            fig, ax = plt.subplots(figsize=(10, 6), dpi=200)
+            fig.patch.set_facecolor('#ffffff')
+            ax.set_facecolor('#f8f9fa')
+            
+            # Styling spines
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_color('#cccccc')
+            ax.spines['bottom'].set_color('#cccccc')
+            ax.grid(True, linestyle=':', alpha=0.5)
+
+            # Beautiful color palette
+            palette = ["#3498db", "#e74c3c", "#2ecc71", "#f1c40f", "#9b59b6", "#1abc9c", "#e67e22"]
+            markers = ['o', 's', '^', 'D', 'v', 'p', '*']
+
+            # 3. Plot each filter/band
+            for idx, (b_name, b_data) in enumerate(sorted(band_data.items())):
+                color = palette[idx % len(palette)]
+                marker = markers[idx % len(markers)]
+                
+                t_arr = np.asarray(b_data["t"])
+                y_arr = np.asarray(b_data["y"])
+                y_err_arr = np.asarray(b_data["y_err"])
+                
+                # Clip data to window [t_start, t_end]
+                mask = (t_arr >= t_start) & (t_arr <= t_end)
+                if np.sum(mask) == 0:
+                    continue
+                
+                ax.errorbar(
+                    t_arr[mask], 
+                    y_arr[mask], 
+                    yerr=y_err_arr[mask], 
+                    fmt=marker, 
+                    color=color, 
+                    markersize=4, 
+                    alpha=0.7, 
+                    elinewidth=0.6, 
+                    capsize=0,
+                    label=b_name
+                )
+
+            # 4. Draw peak indicators
+            for a in all_anomalies:
+                ax.axvline(a["t0"], color='#2c3e50', linestyle='--', linewidth=1.2, alpha=0.8)
+                label_text = f"Peak: $t_0$={a['t0']:.2f}\n$t_E$={a['tE']:.1f}d\nSNR={a['snr']:.1f}σ"
+                # Place label neatly
+                ax.text(
+                    a["t0"] + 0.05 * (t_end - t_start), 
+                    ax.get_ylim()[0] + 0.7 * (ax.get_ylim()[1] - ax.get_ylim()[0]), 
+                    label_text, 
+                    fontsize=9, 
+                    color='#2c3e50', 
+                    bbox=dict(facecolor='#ffffff', alpha=0.8, edgecolor='#cccccc', boxstyle='round,pad=0.3'),
+                    zorder=5
+                )
+
+            ax.set_xlabel("Time (BJD / Days)", fontsize=11, fontweight='bold', labelpad=10)
+            ax.set_ylabel("Relative Flux", fontsize=11, fontweight='bold', labelpad=10)
+            ax.set_xlim(t_start, t_end)
+            ax.set_title("MicroWavelet: Detailed Anomaly Detections", fontsize=13, fontweight='bold', pad=15, loc='left')
+            ax.legend(loc="upper right", frameon=True, facecolor='#ffffff', edgecolor='#cccccc')
+            
+            # Save file
+            os.makedirs(stamp_dir, exist_ok=True)
+            out_path = os.path.join(stamp_dir, "stamp_peaks.png")
+            plt.savefig(out_path, bbox_inches='tight', facecolor='#ffffff')
+            plt.close(fig)
+            print(f"✅ Anomaly stamp plot successfully saved to {out_path}")
+        except Exception as e:
+            print(f"⚠️ Warning: Failed to generate stamp plot: {e}")
 
     # ------------------------------------------------------------------
     # 7. Assemble output

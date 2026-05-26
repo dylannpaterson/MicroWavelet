@@ -91,7 +91,8 @@ results = analyze_lightcurve(
     min_period=1.0,
     max_period=10.0,
     interpolator="weighted",
-    cwt_threshold=12.0
+    cwt_threshold=12.0,
+    stamp_dir="plots/"        # Optional: Save a detailed stamp plot of all peaks
 )
 
 # 3. Access detection parameters

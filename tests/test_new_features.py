@@ -107,5 +107,32 @@ def test_new_features():
 
     print("\nAll tests completed successfully!")
 
+def test_stamp_plot_generation():
+    import tempfile
+    import os
+    import shutil
+
+    # Create dummy data with a peak
+    t_obs = np.arange(0, 100, 0.1)
+    y_flux = paczynski(t_obs, 50.0, 10.0, 0.1)
+    y_err = np.ones_like(y_flux) * 0.01
+    y_obs = y_flux + np.random.normal(0, 0.01, size=len(y_flux))
+    data = {"band1": {"t": t_obs, "y": y_obs, "y_err": y_err}}
+
+    temp_dir = tempfile.mkdtemp()
+    try:
+        # Run with stamp plot output enabled
+        analyze_lightcurve(data, stamp_dir=temp_dir)
+        
+        # Verify that stamp_peaks.png was generated
+        plot_path = os.path.join(temp_dir, "stamp_peaks.png")
+        assert os.path.exists(plot_path), "Stamp plot was not created"
+        assert os.path.getsize(plot_path) > 0, "Stamp plot is empty"
+        print(f"✅ Stamp plot test passed! Saved successfully in: {plot_path}")
+    finally:
+        # Clean up temporary directory
+        shutil.rmtree(temp_dir)
+
 if __name__ == "__main__":
     test_new_features()
+    test_stamp_plot_generation()

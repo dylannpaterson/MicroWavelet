@@ -1,0 +1,45 @@
+name: Apply Ruff Fixes
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ruff-fix:
+    name: Apply Ruff fixes
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          architecture: x64
+          cache: pip
+
+      - name: Install package
+        run: python -m pip install -e ".[dev]"
+
+      - name: Apply Ruff fixes
+        run: |
+          python -m ruff check --fix .
+          python -m ruff format .
+
+      - name: Commit fixes
+        run: |
+          if git diff --quiet; then
+            echo "No Ruff changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "style: apply Ruff fixes"
+          git push

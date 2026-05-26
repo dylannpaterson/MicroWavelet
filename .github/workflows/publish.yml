@@ -18,6 +18,7 @@ permissions:
 jobs:
   pypi-publish:
     name: Build and publish to PyPI
+    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     environment: pypi
 

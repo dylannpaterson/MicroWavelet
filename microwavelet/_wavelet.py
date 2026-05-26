@@ -24,12 +24,12 @@ Key design choices
 
 import numpy as np
 from scipy import interpolate
-from scipy.signal import fftconvolve, find_peaks, windows
-
+from scipy.signal import fftconvolve, find_peaks
 
 # ---------------------------------------------------------------------------
 # Paczynski kernel generator
 # ---------------------------------------------------------------------------
+
 
 def get_kernels(tk, tE, u0=0.05):
     """
@@ -52,8 +52,8 @@ def get_kernels(tk, tE, u0=0.05):
     ke, ko : np.ndarray, np.ndarray
         Even (symmetric) and odd (anti-symmetric) kernels.
     """
-    u = np.sqrt(u0 ** 2 + (tk / tE) ** 2)
-    A = (u ** 2 + 2) / (u * np.sqrt(u ** 2 + 4))
+    u = np.sqrt(u0**2 + (tk / tE) ** 2)
+    A = (u**2 + 2) / (u * np.sqrt(u**2 + 4))
     dt = tk[1] - tk[0]
 
     first_deriv = np.gradient(A, dt)
@@ -61,11 +61,11 @@ def get_kernels(tk, tE, u0=0.05):
 
     ke = -second_deriv
     ke -= np.mean(ke)
-    ke /= (np.sum(np.abs(ke)) + 1e-12)
+    ke /= np.sum(np.abs(ke)) + 1e-12
 
     ko = first_deriv
     ko -= np.mean(ko)
-    ko /= (np.sum(np.abs(ko)) + 1e-12)
+    ko /= np.sum(np.abs(ko)) + 1e-12
 
     return ke, ko
 
@@ -73,6 +73,7 @@ def get_kernels(tk, tE, u0=0.05):
 # ---------------------------------------------------------------------------
 # Symmetry metric
 # ---------------------------------------------------------------------------
+
 
 def calculate_symmetry(t, y, t0, tE_val):
     """
@@ -103,6 +104,7 @@ def calculate_symmetry(t, y, t0, tE_val):
 # Analytical u0 estimator
 # ---------------------------------------------------------------------------
 
+
 def _u0_from_amplification(A):
     """
     Analytically inverts the Paczynski amplification formula to recover u0.
@@ -121,7 +123,7 @@ def _u0_from_amplification(A):
     """
     if A <= 1.001:
         return np.nan
-    A2m1 = A ** 2 - 1.0
+    A2m1 = A**2 - 1.0
     x = 2.0 * (A / np.sqrt(A2m1) - 1.0)
     return np.sqrt(max(x, 1e-6))
 
@@ -129,6 +131,7 @@ def _u0_from_amplification(A):
 # ---------------------------------------------------------------------------
 # tE bias correction
 # ---------------------------------------------------------------------------
+
 
 def _tE_correction_factor(u0_event, u0_template=0.05):
     """
@@ -145,7 +148,7 @@ def _tE_correction_factor(u0_event, u0_template=0.05):
         tE_scan = tE_true * r_peak(u0_event)
         → tE_true = tE_scan / r_peak(u0_event)
 
-    where r_peak(u0) is the exact numerical peak ratio computed via 
+    where r_peak(u0) is the exact numerical peak ratio computed via
     scale-invariant CWT.
 
     Parameters
@@ -170,17 +173,18 @@ def _tE_correction_factor(u0_event, u0_template=0.05):
     coeffs = [12.07074638, -29.26124165, 28.15495458, -18.91458072, 22.28322211, -0.06346686]
     poly = np.poly1d(coeffs)
     r_val = poly(u0_clipped)
-    
+
     # Avoid division by zero or negative values
     if r_val < 0.01:
         return 1.0
-        
+
     return 1.0 / r_val
 
 
 # ---------------------------------------------------------------------------
 # Gamma sweep tE estimator
 # ---------------------------------------------------------------------------
+
 
 def detect_cwt_peaks(
     t_obs,
@@ -250,7 +254,7 @@ def detect_cwt_peaks(
         w = np.ones_like(y_obs)
     else:
         err_clean = np.where((y_obs_err > 1e-12) & np.isfinite(y_obs_err), y_obs_err, 1e-12)
-        w = 1.0 / (err_clean ** 2)
+        w = 1.0 / (err_clean**2)
 
     # Calculate median observation spacing (cadence) at the top
     diffs = np.diff(t_obs)
@@ -267,7 +271,7 @@ def detect_cwt_peaks(
     grid_mask = np.zeros(len(t_grid), dtype=bool)
     for to in t_obs:
         idx_m = int((to - t_grid[0]) / dt)
-        grid_mask[max(0, idx_m - 10): min(len(t_grid), idx_m + 10)] = True
+        grid_mask[max(0, idx_m - 10) : min(len(t_grid), idx_m + 10)] = True
 
     # Interpolate onto regular grid
     f_interp = interpolate.interp1d(
@@ -362,7 +366,7 @@ def detect_cwt_peaks(
             # Clip to physically plausible range: white noise (0) to steep red noise (2)
             gamma_global = float(np.clip(-beta_fit / 2.0, -1.5, 0.0))
         else:
-            gamma_global = -0.5   # fallback: assume 1/f noise
+            gamma_global = -0.5  # fallback: assume 1/f noise
 
         norm_map = np.zeros_like(pe_map)
         for i in range(pe_map.shape[0]):
@@ -400,7 +404,9 @@ def detect_cwt_peaks(
 
             # Use the raw scale-invariant convolution map to pick the best scale
             col_raw = pe_map[:, p_idx]
-            corrected = col_raw * (tE_scales ** -0.5)
+
+            # Initial tE estimate from the scan pass restricted to valid scales
+            corrected = col_raw * (tE_scales**-0.5)
             valid_indices = np.where(valid_scale_mask)[0]
             if len(valid_indices) == 0:
                 valid_indices = np.arange(len(tE_scales))
@@ -408,7 +414,7 @@ def detect_cwt_peaks(
             dlog_tE = np.log10(tE_scales[1]) - np.log10(tE_scales[0])
             if 0 < row_idx < len(tE_scales) - 1:
                 a = np.log(corrected[row_idx - 1] + 1e-12)
-                b = np.log(corrected[row_idx]     + 1e-12)
+                b = np.log(corrected[row_idx] + 1e-12)
                 c = np.log(corrected[row_idx + 1] + 1e-12)
                 denom = a - 2 * b + c
                 offset = 0.5 * (a - c) / denom if abs(denom) > 1e-12 else 0.0
@@ -451,8 +457,12 @@ def detect_cwt_peaks(
             exact_tE = tE_scan * _tE_correction_factor(u0_est)
 
             # Compute dchi2 and dbic analytically using weighted linear least-squares fit
-            u0_fit = u0_est if (u0_est is not None and not np.isnan(u0_est) and u0_est > 0) else 0.05
-            win_mask = (t_obs >= t_grid[p_idx] - 5.0 * exact_tE) & (t_obs <= t_grid[p_idx] + 5.0 * exact_tE)
+            u0_fit = (
+                u0_est if (u0_est is not None and not np.isnan(u0_est) and u0_est > 0) else 0.05
+            )
+            win_mask = (t_obs >= t_grid[p_idx] - 5.0 * exact_tE) & (
+                t_obs <= t_grid[p_idx] + 5.0 * exact_tE
+            )
             t_win = t_obs[win_mask]
             y_win = y_obs[win_mask]
             w_win = w[win_mask]
@@ -463,7 +473,7 @@ def detect_cwt_peaks(
                 y_win = y_obs
                 w_win = w
 
-            u_win = np.sqrt(u0_fit**2 + ((t_win - t_grid[p_idx]) / exact_tE)**2)
+            u_win = np.sqrt(u0_fit**2 + ((t_win - t_grid[p_idx]) / exact_tE) ** 2)
             u_win = np.where(u_win > 1e-6, u_win, 1e-6)
             A_win = (u_win**2 + 2.0) / (u_win * np.sqrt(u_win**2 + 4.0))
             S_win = A_win - 1.0
@@ -484,11 +494,11 @@ def detect_cwt_peaks(
 
             # Model chi2
             y_model = Fs * S_win + Fb
-            chi2_lens = np.sum(w_win * (y_win - y_model)**2)
+            chi2_lens = np.sum(w_win * (y_win - y_model) ** 2)
 
             # Null chi2
             Fb_null = sum_wy / (sum_w + 1e-12)
-            chi2_null = np.sum(w_win * (y_win - Fb_null)**2)
+            chi2_null = np.sum(w_win * (y_win - Fb_null) ** 2)
 
             dchi2 = chi2_null - chi2_lens
             N_pts = len(t_win)
@@ -502,35 +512,37 @@ def detect_cwt_peaks(
             if min_dchi2 is not None and dchi2 < min_dchi2:
                 continue
 
-            found.append({
-                "t0":       float(t_grid[p_idx]),
-                "tE":       float(exact_tE),
-                "tE_scan":  float(tE_scan),           # u0=0.05 scan estimate
-                "u0":       float(u0_est) if not np.isnan(u0_est) else None,
-                "A_peak":   float(A_peak) if not np.isnan(A_peak) else None,
-                "snr":      float(consensus_1d[p_idx]),
-                "symmetry": float(sym),
-                "type":     "dip" if is_min else "peak",
-                "gamma":    float(gamma_global),      # noise-floor estimated gamma
-                "dchi2":    float(dchi2),
-                "dbic":     float(dbic),
-                "edge_flag": edge_flag,
-            })
+            found.append(
+                {
+                    "t0": float(t_grid[p_idx]),
+                    "tE": float(exact_tE),
+                    "tE_scan": float(tE_scan),  # u0=0.05 scan estimate
+                    "u0": float(u0_est) if not np.isnan(u0_est) else None,
+                    "A_peak": float(A_peak) if not np.isnan(A_peak) else None,
+                    "snr": float(consensus_1d[p_idx]),
+                    "symmetry": float(sym),
+                    "type": "dip" if is_min else "peak",
+                    "gamma": float(gamma_global),  # noise-floor estimated gamma
+                    "dchi2": float(dchi2),
+                    "dbic": float(dbic),
+                    "edge_flag": edge_flag,
+                }
+            )
 
         return found, consensus_1d, norm_map
 
     even_peaks, c1d_e, n_map_e = process_morphology(pe_e)
-    odd_peaks,  c1d_o, n_map_o = process_morphology(pe_o)
+    odd_peaks, c1d_o, n_map_o = process_morphology(pe_o)
 
     return {
         "even_peaks": even_peaks,
-        "odd_peaks":  odd_peaks,
-        "t_grid":     t_grid,
-        "f_interp":   f_interp,
-        "grid_mask":  grid_mask,
+        "odd_peaks": odd_peaks,
+        "t_grid": t_grid,
+        "f_interp": f_interp,
+        "grid_mask": grid_mask,
         "consensus_1d_even": c1d_e,
-        "consensus_1d_odd":  c1d_o,
-        "norm_map_even":     n_map_e,
-        "norm_map_odd":      n_map_o,
-        "tE_scales":  tE_scales,
+        "consensus_1d_odd": c1d_o,
+        "norm_map_even": n_map_e,
+        "norm_map_odd": n_map_o,
+        "tE_scales": tE_scales,
     }

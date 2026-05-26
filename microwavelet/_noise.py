@@ -7,6 +7,7 @@ Identifies white noise floor, red (correlated) noise excess, and autocorrelation
 
 import numpy as np
 
+
 def characterize_noise(t, y, y_err=None, bin_sizes=None):
     """
     Robustly characterises white and red (correlated) noise in a light curve.
@@ -41,29 +42,29 @@ def characterize_noise(t, y, y_err=None, bin_sizes=None):
     """
     t = np.asarray(t)
     y = np.asarray(y)
-    
+
     # Sort by time to ensure physical lag calculations
     sort_idx = np.argsort(t)
     t = t[sort_idx]
     y = y[sort_idx]
-    
+
     # 1. White Noise Estimation (Robust against long-term physical trends / events)
     # Standard deviation of first differences divided by sqrt(2)
     dy = np.diff(y)
     med_dy = np.median(dy)
     mad_dy = np.median(np.abs(dy - med_dy)) / 0.6745
     sigma_white = float(mad_dy / np.sqrt(2.0))
-    
+
     # 2. Total Variance
     med_y = np.median(y)
     mad_y = np.median(np.abs(y - med_y)) / 0.6745
     sigma_total = float(mad_y)
-    
+
     # 3. Autocorrelation Function (ACF) at lag 1 and 2
     n = len(y)
     autocorr_lag1 = 0.0
     autocorr_lag2 = 0.0
-    
+
     if n > 5:
         y_centered = y - np.mean(y)
         var = np.var(y)
@@ -74,21 +75,21 @@ def characterize_noise(t, y, y_err=None, bin_sizes=None):
     # 4. Pont-Style Binning Scaling Factor (Red Noise Excess)
     if bin_sizes is None:
         bin_sizes = [5, 10, 20, 50]
-        
+
     pont_excess = {}
     for M in bin_sizes:
         if n >= 2 * M:
             # Reshape into non-overlapping bins of size M
             n_bins = n // M
-            binned_y = np.mean(y[:n_bins * M].reshape(n_bins, M), axis=1)
-            
+            binned_y = np.mean(y[: n_bins * M].reshape(n_bins, M), axis=1)
+
             # Robust scatter of binned residuals
             med_b = np.median(binned_y)
             mad_b = np.median(np.abs(binned_y - med_b)) / 0.6745
-            
+
             # Expected scatter if pure white noise
             expected_scatter = sigma_white / np.sqrt(M)
-            
+
             # Pont excess ratio: actual binned scatter / expected white scatter
             ratio = float(mad_b / (expected_scatter + 1e-12))
             pont_excess[M] = ratio

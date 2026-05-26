@@ -77,7 +77,7 @@ def analyze_lightcurve(
     cwt_threshold=12.0,
     tE_scales=None,
     baseline_func=None,
-    interpolator="linear",
+    interpolator="weighted",
     min_dchi2=None,
     stamp_dir=None,
 ):
@@ -261,8 +261,25 @@ def analyze_lightcurve(
         if not any(abs(p_odd["t0"] - p_e["t0"]) < 1.5 for p_e in all_anomalies):
             all_anomalies.append(p_odd)
 
+    # 6.1. Robust scale-based anomaly deduplication (keeps the highest-SNR peak)
+    # to avoid double-counting or splitting a single event.
+    deduped = []
+    # Sort by SNR descending to process the most significant detections first
+    sorted_by_snr = sorted(all_anomalies, key=lambda x: x["snr"], reverse=True)
+    for a in sorted_by_snr:
+        is_duplicate = False
+        for accepted in deduped:
+            separation = abs(a["t0"] - accepted["t0"])
+            max_tE = max(a["tE"], accepted["tE"])
+            # If peaks are within 1.5 * max_tE, they are part of the same event
+            if separation < 1.5 * max_tE:
+                is_duplicate = True
+                break
+        if not is_duplicate:
+            deduped.append(a)
+
     # Chronological order; stamp the detection band and compute chromaticity flags
-    all_anomalies = sorted(all_anomalies, key=lambda x: x["t0"])
+    all_anomalies = sorted(deduped, key=lambda x: x["t0"])
 
     def get_paczynski_template(t, t0, tE, u0):
         u = np.sqrt(u0**2 + ((t - t0) / tE)**2)

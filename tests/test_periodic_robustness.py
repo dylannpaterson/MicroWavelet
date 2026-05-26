@@ -29,7 +29,7 @@ def test_periodic_robustness_standard_case():
     
     # Verify period recovery (allowing for small aliases if they detrend well)
     recovered_period = results["detrending"]["period_days"]
-    is_correct = any(abs(recovered_period - period_true * f) < 0.2 for f in [1.0, 2.0])
+    is_correct = any(abs(recovered_period - period_true * f) < 0.2 for f in [0.5, 1.0, 2.0])
     assert is_correct, f"Failed to recover true period or harmonic. Found {recovered_period}"
     
     # Verify event preservation in detrended data

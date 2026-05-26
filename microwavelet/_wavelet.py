@@ -252,6 +252,10 @@ def detect_cwt_peaks(
         err_clean = np.where((y_obs_err > 1e-12) & np.isfinite(y_obs_err), y_obs_err, 1e-12)
         w = 1.0 / (err_clean ** 2)
 
+    # Calculate median observation spacing (cadence) at the top
+    diffs = np.diff(t_obs)
+    median_spacing = np.median(diffs) if len(diffs) > 0 else dt
+
     if tE_scales is None:
         tE_scales = np.logspace(np.log10(0.02), np.log10(200.0), 120)
 
@@ -271,7 +275,8 @@ def detect_cwt_peaks(
     )(t_grid)
 
     if interpolator == "weighted":
-        h = 2.0 * dt
+        # Adaptive bandwidth based on the median observation spacing (cadence)
+        h = max(2.0 * dt, 1.5 * median_spacing)
         active_indices = np.where(grid_mask)[0]
         left_idx = np.searchsorted(t_obs, t_grid[active_indices] - 4.0 * h, side="left")
         right_idx = np.searchsorted(t_obs, t_grid[active_indices] + 4.0 * h, side="right")
@@ -369,7 +374,13 @@ def detect_cwt_peaks(
                 if mad > 1e-6:
                     norm_map[i, :] = (row - med) / mad
 
-        consensus_1d = np.max(norm_map, axis=0)
+        # Exclude sub-cadence scales from the consensus Z-score map
+        min_physical_scale = max(0.05, 0.25 * median_spacing)
+        valid_scale_mask = tE_scales >= min_physical_scale
+        if not np.any(valid_scale_mask):
+            valid_scale_mask = np.ones_like(tE_scales, dtype=bool)
+
+        consensus_1d = np.max(norm_map[valid_scale_mask, :], axis=0)
         peaks, _ = find_peaks(
             consensus_1d * grid_mask,
             height=cwt_threshold,
@@ -382,9 +393,12 @@ def detect_cwt_peaks(
         for p_idx in peaks:
             col_raw = pe_map[:, p_idx]
 
-            # Initial tE estimate from the scan pass (u0=0.05 template, mathematically correct scale invariance)
+            # Initial tE estimate from the scan pass restricted to valid scales
             corrected = col_raw * (tE_scales ** -0.5)
-            row_idx = int(np.argmax(corrected))
+            valid_indices = np.where(valid_scale_mask)[0]
+            if len(valid_indices) == 0:
+                valid_indices = np.arange(len(tE_scales))
+            row_idx = valid_indices[np.argmax(corrected[valid_indices])]
             dlog_tE = np.log10(tE_scales[1]) - np.log10(tE_scales[0])
             if 0 < row_idx < len(tE_scales) - 1:
                 a = np.log(corrected[row_idx - 1] + 1e-12)
@@ -418,6 +432,11 @@ def detect_cwt_peaks(
             else:
                 A_peak = np.nan
                 u0_est = np.nan
+
+            # Filter out physically unresolved sub-cadence detections (interpolation/noise artifacts).
+            # A physically resolvable event must have a scan timescale of at least 1.0 * median_spacing (minimum 0.1 days).
+            if tE_scan < max(0.1, 1.0 * median_spacing):
+                continue
 
             # Refine tE using analytical bias correction (fast and robust).
             exact_tE = tE_scan * _tE_correction_factor(u0_est)

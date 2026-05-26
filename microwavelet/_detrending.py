@@ -142,7 +142,7 @@ class WhittakerSmoother:
         return log_like
 
 
-def fit_periodic_gp_robust(t, y, y_err, period, n_bins=120, max_iter=4, sigma_clip=5.0):
+def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_clip=5.0):
     """
     Fits a smooth periodic Whittaker-Eilers smoother (Smoothing Spline)
     to the phase-folded light curve.
@@ -163,8 +163,25 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=120, max_iter=4, sigma_cl
     y = np.asarray(y)
     y_err = np.asarray(y_err)
     phase = (t % period) / period
-    valid_mask = np.ones_like(y, dtype=bool)
+    # Initialize valid_mask using robust positive 3-sigma MAD clipping on the quiescent baseline
+    # to protect the baseline from massive transients right away.
+    y_low = y[y <= np.median(y)]
+    if len(y_low) > 5:
+        base_level = np.median(y_low)
+        mad = median_abs_deviation(y_low)
+        sigma = 1.4826 * mad if mad > 0 else np.std(y_low)
+    else:
+        base_level = np.median(y)
+        mad = median_abs_deviation(y)
+        sigma = 1.4826 * mad if mad > 0 else np.std(y)
+
+    valid_mask = y < base_level + 3.0 * sigma
     gp = None
+
+    # Dynamically set n_bins based on the number of active points
+    # to ensure robust bin occupancy and prevent empty-bin GCV issues.
+    if n_bins is None:
+        n_bins = int(np.clip(np.sum(valid_mask) // 8, 40, 120))
 
     # Construct the periodic second-difference Laplacian matrix D of size n_bins x n_bins
     D = np.zeros((n_bins, n_bins))
@@ -190,7 +207,10 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=120, max_iter=4, sigma_cl
                 bin_values[k] = median_val
                 std_val = np.std(y[in_bin])
                 se_val = 1.2533 * std_val / np.sqrt(n_pts) if n_pts > 1 else y_err[in_bin][0]
-                bin_errors[k] = max(se_val, 1e-4)
+                
+                # Stabilized bin error estimation using data point uncertainties
+                min_err = np.mean(y_err[in_bin]) / np.sqrt(n_pts)
+                bin_errors[k] = max(se_val, min_err, 1e-4)
                 W_diag[k] = 1.0 / bin_errors[k]**2
             else:
                 bin_values[k] = 0.0
@@ -220,8 +240,8 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=120, max_iter=4, sigma_cl
             except np.linalg.LinAlgError:
                 return 1e10
 
-        # Grid search
-        log_lams = np.linspace(-3.0, 6.0, 30)
+        # Grid search (lower bound of 0.0 / lambda=1.0 protects empty bins from ill-conditioned ringing)
+        log_lams = np.linspace(0.0, 6.0, 30)
         scores = [gcv_score(l) for l in log_lams]
         best_idx = np.argmin(scores)
         best_log_lam = log_lams[best_idx]
@@ -229,7 +249,7 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=120, max_iter=4, sigma_cl
         # Refinement
         lam = 10**best_log_lam
         try:
-            bounds = (max(-3.0, best_log_lam - 1.0), min(6.0, best_log_lam + 1.0))
+            bounds = (max(0.0, best_log_lam - 1.0), min(6.0, best_log_lam + 1.0))
             res = optimize.minimize_scalar(gcv_score, bounds=bounds, method='bounded', options={'xatol': 1e-3})
             if res.success:
                 lam = 10**res.x
@@ -322,13 +342,13 @@ def resolve_fundamental_period(t, y, y_err, period, mask, min_period=1.0, max_pe
             break
 
     # 2. Iterative Halving (Aggressive Occam's Razor)
-    # We prefer the shorter period unless it's much worse (Delta LML < -10).
+    # We prefer the shorter period unless it's much worse (Delta LML < -2.0).
     for _ in range(3):
         half_p = 0.5 * current_p
         if half_p < min_period:
             break
         half_lml = get_gp_evidence(half_p)
-        if half_lml > (current_lml - 10.0):
+        if half_lml > (current_lml - 2.0):
             current_p = half_p
             current_lml = half_lml
         else:

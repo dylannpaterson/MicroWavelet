@@ -13,19 +13,15 @@ Pipeline
 """
 
 import numpy as np
-import warnings
-from scipy import optimize
-from scipy.stats import median_abs_deviation
-from scipy.interpolate import CubicSpline
 from astropy.timeseries import LombScargle
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import ExpSineSquared, ConstantKernel as C, RationalQuadratic
-from sklearn.exceptions import ConvergenceWarning
-
+from scipy import optimize
+from scipy.interpolate import CubicSpline
+from scipy.stats import median_abs_deviation
 
 # ---------------------------------------------------------------------------
 # 1. Period search
 # ---------------------------------------------------------------------------
+
 
 def find_shared_period(t, y, dy, min_period=1.0, max_period=10.0):
     """
@@ -49,9 +45,9 @@ def find_shared_period(t, y, dy, min_period=1.0, max_period=10.0):
     mad = median_abs_deviation(y)
     sigma = 1.4826 * mad if mad > 0 else np.std(y)
     clean_mask = y < np.median(y) + 2.5 * sigma
-    
+
     t_c, y_c, dy_c = t[clean_mask], y[clean_mask], dy[clean_mask]
-    
+
     if len(t_c) < 20:
         t_c, y_c, dy_c = t, y, dy
         clean_mask = np.ones_like(y, dtype=bool)
@@ -73,8 +69,8 @@ def find_shared_period(t, y, dy, min_period=1.0, max_period=10.0):
         # Simple binned MAD score: lower is better
         bins = np.linspace(0.0, 1.0, 20)
         scatters = []
-        for i in range(len(bins)-1):
-            m = (phase >= bins[i]) & (phase < bins[i+1])
+        for i in range(len(bins) - 1):
+            m = (phase >= bins[i]) & (phase < bins[i + 1])
             if np.sum(m) > 2:
                 scatters.append(median_abs_deviation(y_c[m]))
         return np.mean(scatters) if scatters else 1e10
@@ -90,16 +86,31 @@ def find_shared_period(t, y, dy, min_period=1.0, max_period=10.0):
 # 2. GPR phase-folded fit
 # ---------------------------------------------------------------------------
 
+
 class DummyKernel:
     def __init__(self):
         self.theta = np.array([1.0])
+
 
 class WhittakerSmoother:
     """
     A 100% backward-compatible wrapper around the Whittaker-Eilers smoother
     that mimics the sklearn GaussianProcessRegressor interface.
     """
-    def __init__(self, bin_centers, bin_values, bin_errors, W_diag, D_TD, lam, tr_H, rss, N_valid, sum_log_var):
+
+    def __init__(
+        self,
+        bin_centers,
+        bin_values,
+        bin_errors,
+        W_diag,
+        D_TD,
+        lam,
+        tr_H,
+        rss,
+        N_valid,
+        sum_log_var,
+    ):
         self.bin_centers = bin_centers
         self.bin_values = bin_values
         self.bin_errors = bin_errors
@@ -116,7 +127,7 @@ class WhittakerSmoother:
         # We append a wrapped first element at the end of the period
         x_cs = np.concatenate([bin_centers, [bin_centers[0] + 1.0]])
         y_cs = np.concatenate([bin_values, [bin_values[0]]])
-        self.cs = CubicSpline(x_cs, y_cs, bc_type='periodic')
+        self.cs = CubicSpline(x_cs, y_cs, bc_type="periodic")
 
     def predict(self, X, return_std=False):
         X_arr = np.asarray(X)
@@ -207,11 +218,11 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
                 bin_values[k] = median_val
                 std_val = np.std(y[in_bin])
                 se_val = 1.2533 * std_val / np.sqrt(n_pts) if n_pts > 1 else y_err[in_bin][0]
-                
+
                 # Stabilized bin error estimation using data point uncertainties
                 min_err = np.mean(y_err[in_bin]) / np.sqrt(n_pts)
                 bin_errors[k] = max(se_val, min_err, 1e-4)
-                W_diag[k] = 1.0 / bin_errors[k]**2
+                W_diag[k] = 1.0 / bin_errors[k] ** 2
             else:
                 bin_values[k] = 0.0
                 bin_errors[k] = 1e-4
@@ -225,7 +236,12 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
             N_valid = n_bins
 
         # Optimize lambda using GCV
-        def gcv_score(log_lam):
+        def gcv_score(
+            log_lam,
+            W_diag=W_diag,
+            bin_values=bin_values,
+            N_valid=N_valid,
+        ):
             lam = 10**log_lam
             A = np.diag(W_diag) + lam * D_TD
             try:
@@ -242,7 +258,7 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
 
         # Grid search (lower bound of 0.0 / lambda=1.0 protects empty bins from ill-conditioned ringing)
         log_lams = np.linspace(0.0, 6.0, 30)
-        scores = [gcv_score(l) for l in log_lams]
+        scores = [gcv_score(log_lam) for log_lam in log_lams]
         best_idx = np.argmin(scores)
         best_log_lam = log_lams[best_idx]
 
@@ -250,10 +266,12 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
         lam = 10**best_log_lam
         try:
             bounds = (max(0.0, best_log_lam - 1.0), min(6.0, best_log_lam + 1.0))
-            res = optimize.minimize_scalar(gcv_score, bounds=bounds, method='bounded', options={'xatol': 1e-3})
+            res = optimize.minimize_scalar(
+                gcv_score, bounds=bounds, method="bounded", options={"xatol": 1e-3}
+            )
             if res.success:
                 lam = 10**res.x
-        except:
+        except (ValueError, RuntimeError, np.linalg.LinAlgError):
             pass
 
         # Perform the final solve with optimized lambda
@@ -269,7 +287,7 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
             rss = 0.0
 
         valid_bins = W_diag > 0
-        sum_log_var = np.sum(np.log(2.0 * np.pi * bin_errors[valid_bins]**2))
+        sum_log_var = np.sum(np.log(2.0 * np.pi * bin_errors[valid_bins] ** 2))
 
         gp = WhittakerSmoother(
             bin_centers=bin_centers,
@@ -281,7 +299,7 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
             tr_H=tr_H,
             rss=rss,
             N_valid=N_valid,
-            sum_log_var=sum_log_var
+            sum_log_var=sum_log_var,
         )
 
         y_model = gp.predict(phase)
@@ -304,9 +322,10 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
 # 3. Alias resolution
 # ---------------------------------------------------------------------------
 
+
 def resolve_fundamental_period(t, y, y_err, period, mask, min_period=1.0, max_period=10.0):
     """
-    Finds the fundamental period by iteratively doubling and halving 
+    Finds the fundamental period by iteratively doubling and halving
     candidates using Bayesian Log-Marginal Likelihood (LML).
 
     1. Doubling: Try to find the full orbital cycle where complex shapes
@@ -314,7 +333,7 @@ def resolve_fundamental_period(t, y, y_err, period, mask, min_period=1.0, max_pe
     2. Halving: Apply Aggressive Occam's Razor to find the simplest fundamental.
     """
     t_f, y_f, ye_f = np.asarray(t)[mask], np.asarray(y)[mask], np.asarray(y_err)[mask]
-    
+
     def get_gp_evidence(p):
         if p < min_period or p > max_period:
             return -1e20
@@ -322,7 +341,7 @@ def resolve_fundamental_period(t, y, y_err, period, mask, min_period=1.0, max_pe
             # We use max_iter=2 for a reasonably converged fit
             gp, phase, m = fit_periodic_gp_robust(t_f, y_f, ye_f, p, max_iter=2)
             return gp.log_marginal_likelihood(gp.kernel_.theta)
-        except:
+        except (ValueError, RuntimeError, np.linalg.LinAlgError):
             return -1e20
 
     current_p = period
@@ -353,7 +372,7 @@ def resolve_fundamental_period(t, y, y_err, period, mask, min_period=1.0, max_pe
             current_lml = half_lml
         else:
             break
-            
+
     return current_p
 
 
@@ -361,37 +380,39 @@ def resolve_fundamental_period(t, y, y_err, period, mask, min_period=1.0, max_pe
 # 4. Period fine-tuning
 # ---------------------------------------------------------------------------
 
+
 def fine_tune_period(t, y, y_err, initial_period, mask, baseline_func=None):
     """
-    Fine-tunes the period by minimizing the residual RMS of a full 
+    Fine-tunes the period by minimizing the residual RMS of a full
     robust periodic GP fit to the phase-folded data.
     """
     t_fit = np.asarray(t)
     y_fit = np.asarray(y)
     ye_fit = np.asarray(y_err)
-    
+
     if len(t_fit[mask]) < 20:
         return initial_period
 
     def objective(p):
-        if p <= 0: return 1e10
+        if p <= 0:
+            return 1e10
         try:
             gp, phase, m = fit_periodic_gp_robust(t_fit, y_fit, ye_fit, p, max_iter=2)
             y_pred = gp.predict(phase[:, np.newaxis])
-            return np.sqrt(np.mean((y_fit[m] - y_pred[m])**2))
-        except:
+            return np.sqrt(np.mean((y_fit[m] - y_pred[m]) ** 2))
+        except (ValueError, RuntimeError, np.linalg.LinAlgError):
             return 1e10
 
     try:
         res = optimize.minimize_scalar(
-            objective, 
-            bounds=(initial_period * 0.90, initial_period * 1.10), 
-            method='bounded',
-            options={'xatol': 1e-6}
+            objective,
+            bounds=(initial_period * 0.90, initial_period * 1.10),
+            method="bounded",
+            options={"xatol": 1e-6},
         )
         if res.success:
             return res.x
-    except:
+    except (ValueError, RuntimeError, np.linalg.LinAlgError):
         pass
 
     return initial_period
@@ -400,6 +421,7 @@ def fine_tune_period(t, y, y_err, initial_period, mask, baseline_func=None):
 # ---------------------------------------------------------------------------
 # 5. Orchestrator
 # ---------------------------------------------------------------------------
+
 
 def detrend_light_curve_periodic(band_data, min_period=1.0, max_period=10.0, baseline_func=None):
     """
@@ -411,8 +433,11 @@ def detrend_light_curve_periodic(band_data, min_period=1.0, max_period=10.0, bas
 
     # 1. Lomb-Scargle period search
     ls_period, _, _, search_mask = find_shared_period(
-        p["t"], p["y"], p["y_err"],
-        min_period=min_period, max_period=max_period,
+        p["t"],
+        p["y"],
+        p["y_err"],
+        min_period=min_period,
+        max_period=max_period,
     )
 
     # 2. Rough mask

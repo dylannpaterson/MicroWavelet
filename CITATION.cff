@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use MicroWavelet in published work, please cite the archived software release."
+title: "MicroWavelet"
+type: software
+authors:
+  - family-names: "Paterson"
+    given-names: "Dylan"
+version: "0.1.0"
+date-released: "2026-05-26"
+license: MIT
+repository-code: "https://github.com/dylannpaterson/MicroWavelet"
+abstract: "CWT-based anomaly detector for multi-filter microlensing light curves."
+identifiers: []

@@ -1,5 +1,9 @@
 # MicroWavelet
 
+<!-- zenodo-doi-badge -->
+DOI: pending Zenodo release
+<!-- /zenodo-doi-badge -->
+
 `MicroWavelet` is a Python library for the detection of transient anomalies in multi-filter light curves using Continuous Wavelet Transform (CWT) methodologies. The package is optimized for microlensing signals but is applicable to general peak and dip detection in time-series data.
 
 The library implements a scale-space search using Paczynski-profile wavelet kernels, integrated with robust Whittaker-Eilers (Smoothing Spline) detrending and multi-band chromaticity analysis.
@@ -74,9 +78,15 @@ For observations of variable stars (e.g., RR Lyrae, eclipsing binaries), the lib
 ## Installation
 
 ```bash
+pip install MicroWavelet
+```
+
+For development from source:
+
+```bash
 git clone https://github.com/dylannpaterson/MicroWavelet.git
 cd MicroWavelet
-pip install .
+pip install -e ".[dev]"
 ```
 
 ---
@@ -146,9 +156,9 @@ For variable sources, the iterative Whittaker detrending pipeline isolates the p
 The core logic and timescale estimation accuracy can be verified using the provided test scripts:
 
 ```bash
-python3 tests/test_cwt_logic.py
-python3 tests/test_te_accuracy.py
-python3 tests/test_periodic_robustness.py
+python -m pytest
+python -m ruff check --fix .
+python -m ruff format .
 ```
 
 ---
@@ -164,8 +174,15 @@ python3 tests/test_periodic_robustness.py
 
 ## Contributing
 
-TBD
+Contributions should be made from a fork via pull request. Before opening a pull request, install the development extras and run the test and lint checks:
+
+```bash
+python -m pip install -e ".[dev]"
+python -m pytest
+python -m ruff check --fix .
+python -m ruff format .
+```
 
 ## Attributing
 
-TBD
+If you use MicroWavelet in published work, cite the archived release DOI listed above or use the repository citation metadata in `CITATION.cff`.

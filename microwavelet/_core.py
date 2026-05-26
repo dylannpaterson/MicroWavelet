@@ -403,7 +403,12 @@ def analyze_lightcurve(
                 marker = markers[idx % len(markers)]
                 
                 t_arr = np.asarray(b_data["t"])
-                y_arr = np.asarray(b_data["y"])
+                if "y" in b_data:
+                    y_arr = np.asarray(b_data["y"])
+                elif "y_detrended" in b_data:
+                    y_arr = np.asarray(b_data["y_detrended"])
+                else:
+                    y_arr = np.asarray(b_data["y_raw"])
                 y_err_arr = np.asarray(b_data["y_err"])
                 
                 # Clip data to window [t_start, t_end]

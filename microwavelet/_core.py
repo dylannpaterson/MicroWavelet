@@ -181,6 +181,17 @@ def analyze_lightcurve(
         raise ValueError("No valid time-series data found in input.")
 
     # ------------------------------------------------------------------
+    # 1.5. Apply High-Precision Time Scaling (MJD/BJD Protection)
+    # Shift all time coordinates internally so they start at 0.0,
+    # completely shielding the GPR, CWT, and GCV steps from float64 precision limits.
+    # ------------------------------------------------------------------
+    t_all = np.concatenate([data["t"] for data in band_data.values()])
+    t_min = float(np.min(t_all)) if len(t_all) > 0 else 0.0
+
+    for b in band_data:
+        band_data[b]["t"] = band_data[b]["t"] - t_min
+
+    # ------------------------------------------------------------------
     # 2. Optional periodic GPR detrending
     # ------------------------------------------------------------------
     detrending_out = None
@@ -378,6 +389,21 @@ def analyze_lightcurve(
                         a["chromaticity_ratio"] = 0.0
                         a["chromatic_flag"] = True
 
+    # ------------------------------------------------------------------
+    # 6.4. Unshift all times back to original unscaled BJD/MJD coordinates
+    # to guarantee user-facing coordinates are correct and stamp plots show original times
+    # ------------------------------------------------------------------
+    for a in all_anomalies:
+        a["t0"] = float(a["t0"] + t_min)
+
+    for b in band_data:
+        band_data[b]["t"] = band_data[b]["t"] + t_min
+
+    if detrending_out is not None:
+        for b in detrending_out["bands"]:
+            detrending_out["bands"][b]["t"] = detrending_out["bands"][b]["t"] + t_min
+
+    cwt_results["t_grid"] = cwt_results["t_grid"] + t_min
 
     # ------------------------------------------------------------------
     # 6.5. Generate Stamp Plot if stamp_dir is supplied and peaks detected

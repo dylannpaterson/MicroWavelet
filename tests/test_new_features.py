@@ -133,6 +133,43 @@ def test_stamp_plot_generation():
         # Clean up temporary directory
         shutil.rmtree(temp_dir)
 
+def test_bjd_scaling_recovery():
+    np.random.seed(42)
+    # Simulate a microlensing event
+    t_obs = np.arange(0, 100, 0.1)
+    y_flux = paczynski(t_obs, 50.0, 10.0, 0.1)
+    y_err = np.ones_like(y_flux) * 0.01
+    y_obs = y_flux + np.random.normal(0, 0.01, size=len(y_flux))
+
+    # Base case (no offset)
+    data_base = {"band1": {"t": t_obs.copy(), "y": y_obs.copy(), "y_err": y_err.copy()}}
+    res_base = analyze_lightcurve(data_base)
+    assert len(res_base["anomalies"]) > 0
+    t0_base = res_base["anomalies"][0]["t0"]
+    snr_base = res_base["anomalies"][0]["snr"]
+
+    # Massive offset case (e.g. BJD offset)
+    offset = 2459000.0
+    t_obs_offset = t_obs + offset
+    data_offset = {"band1": {"t": t_obs_offset, "y": y_obs.copy(), "y_err": y_err.copy()}}
+    res_offset = analyze_lightcurve(data_offset)
+
+    assert len(res_offset["anomalies"]) > 0
+    t0_offset = res_offset["anomalies"][0]["t0"]
+    snr_offset = res_offset["anomalies"][0]["snr"]
+
+    print("\nBJD Scaling Recovery:")
+    print(f"Base t0: {t0_base:.6f}, Offset t0: {t0_offset:.6f} (Expected close to {t0_base + offset:.6f})")
+    print(f"Base SNR: {snr_base:.4f}, Offset SNR: {snr_offset:.4f}")
+
+    # Assert unscaled coordinates are recovered perfectly
+    assert abs(t0_offset - (t0_base + offset)) < 1e-8, "Precision loss or incorrect offset recovery in peak t0"
+    assert np.isclose(snr_offset, snr_base, rtol=1e-3), f"Numerical instability affected peak SNR: {snr_offset} vs {snr_base}"
+    print("✅ BJD Scaling Recovery test passed!")
+
+
 if __name__ == "__main__":
     test_new_features()
     test_stamp_plot_generation()
+    test_bjd_scaling_recovery()
+

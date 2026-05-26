@@ -396,7 +396,7 @@ def detect_cwt_peaks(
         found = []
         for p_idx in peaks:
             # Re-center to the local maximum of f_interp to handle CWT-flux offsets
-            w_search = max(2, int(0.5 / dt)) # 0.5 day search window
+            w_search = max(2, int(0.5 / dt))  # 0.5 day search window
             s_min = max(0, p_idx - w_search)
             s_max = min(n_time, p_idx + w_search + 1)
             f_sub = f_interp[s_min:s_max]

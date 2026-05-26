@@ -406,7 +406,10 @@ def detect_cwt_peaks(
                 c = np.log(corrected[row_idx + 1] + 1e-12)
                 denom = a - 2 * b + c
                 offset = 0.5 * (a - c) / denom if abs(denom) > 1e-12 else 0.0
+                offset = np.clip(offset, -1.0, 1.0)
                 tE_scan = 10 ** (np.log10(tE_scales[row_idx]) + offset * dlog_tE)
+                if not np.isfinite(tE_scan):
+                    tE_scan = float(tE_scales[row_idx])
             else:
                 tE_scan = float(tE_scales[row_idx])
 

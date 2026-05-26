@@ -395,6 +395,14 @@ def detect_cwt_peaks(
 
         found = []
         for p_idx in peaks:
+            # Re-center to the local maximum of f_interp to handle CWT-flux offsets
+            w_search = max(2, int(0.5 / dt)) # 0.5 day search window
+            s_min = max(0, p_idx - w_search)
+            s_max = min(n_time, p_idx + w_search + 1)
+            f_sub = f_interp[s_min:s_max]
+            p_idx = s_min + (np.argmax(f_sub) if f_interp[p_idx] >= 0 else np.argmin(f_sub))
+
+            # Use the raw scale-invariant convolution map to pick the best scale
             col_raw = pe_map[:, p_idx]
 
             # Initial tE estimate from the scan pass restricted to valid scales
@@ -442,7 +450,7 @@ def detect_cwt_peaks(
 
             # Filter out physically unresolved sub-cadence detections (interpolation/noise artifacts).
             # A physically resolvable event must have a scan timescale of at least 1.0 * median_spacing (minimum 0.1 days).
-            if tE_scan < max(0.1, 1.0 * median_spacing):
+            if tE_scan < 1.0 * median_spacing:
                 continue
 
             # Refine tE using analytical bias correction (fast and robust).

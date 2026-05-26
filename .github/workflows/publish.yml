@@ -1,16 +1,9 @@
 name: Publish to PyPI
 
-# This workflow publishes tagged releases to PyPI using Trusted Publishing.
+# This workflow triggers whenever you publish a new Release on GitHub
 on:
-  push:
-    tags:
-      - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag to publish, for example v26.5.26. Required for manual runs."
-        required: false
-        type: string
+  release:
+    types: [published]
 
 jobs:
   pypi-publish:
@@ -52,6 +45,7 @@ jobs:
             exit 1
           fi
           python scripts/bump_version.py --version "${VERSION}"
+
 
       - name: Build the package (sdist and wheel)
         run: python -m build

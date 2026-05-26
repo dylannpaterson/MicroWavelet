@@ -84,8 +84,8 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
 
-      - name: Run Ruff lint fixes
-        run: python -m ruff check --fix --exit-non-zero-on-fix .
+      - name: Run Ruff lint
+        run: python -m ruff check .
 
       - name: Check Ruff formatting
         run: python -m ruff format --check .

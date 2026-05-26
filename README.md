@@ -186,3 +186,7 @@ python -m ruff format .
 ## Attributing
 
 If you use MicroWavelet in published work, cite the archived release DOI listed above or use the repository citation metadata in `CITATION.cff`.
+
+## Maintainer Release Notes
+
+Release and workflow instructions are documented in `RELEASE.md`.

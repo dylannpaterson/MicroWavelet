@@ -3,13 +3,8 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      version_bump:
-        description: "Version bump to apply when exact_version is empty."
-        type: choice
-        options: [patch, minor, major]
-        default: patch
       exact_version:
-        description: "Optional exact version, for example 1.2.3."
+        description: "Optional exact date version, for example 26.5.26. Leave blank to use today's date."
         required: false
         type: string
       zenodo_sandbox:
@@ -19,15 +14,14 @@ on:
         default: false
 
 permissions:
+  actions: write
   contents: write
-  id-token: write
 
 jobs:
   release:
-    name: Build, release, and publish
+    name: Build and release
     runs-on: ubuntu-24.04
     env:
-      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
       ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
       ZENODO_DEPOSITION_ID: ${{ secrets.ZENODO_DEPOSITION_ID }}
 
@@ -60,14 +54,32 @@ jobs:
         id: bump
         run: |
           if [ -n "${{ inputs.exact_version }}" ]; then
-            VERSION="$(python scripts/bump_version.py --version "${{ inputs.exact_version }}")"
+            VERSION="${{ inputs.exact_version }}"
+            TAG="v${VERSION}"
+            if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+              echo "Tag ${TAG} already exists; skipping release creation and PyPI publish."
+              echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+              echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+              echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            VERSION="$(python scripts/bump_version.py --version "${VERSION}")"
           else
-            VERSION="$(python scripts/bump_version.py --part "${{ inputs.version_bump }}")"
+            BASE_VERSION="$(python -c 'import datetime as dt; today = dt.date.today(); print(f"{today.year % 100}.{today.month}.{today.day}")')"
+            VERSION="${BASE_VERSION}"
+            SERIAL=0
+            while git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; do
+              SERIAL=$((SERIAL + 1))
+              VERSION="${BASE_VERSION}.${SERIAL}"
+            done
+            VERSION="$(python scripts/bump_version.py --version "${VERSION}")"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag_exists=false" >> "$GITHUB_OUTPUT"
 
       - name: Reserve Zenodo DOI
+        if: steps.bump.outputs.tag_exists != 'true'
         run: |
           args=(--version "${{ steps.bump.outputs.version }}")
           if [ "${{ inputs.zenodo_sandbox }}" = "true" ]; then
@@ -76,9 +88,11 @@ jobs:
           python scripts/reserve_zenodo_doi.py "${args[@]}"
 
       - name: Build distributions
+        if: steps.bump.outputs.tag_exists != 'true'
         run: python -m build
 
       - name: Generate release notes from commits
+        if: steps.bump.outputs.tag_exists != 'true'
         id: notes
         run: |
           notes_path="${RUNNER_TEMP}/release-notes.md"
@@ -98,16 +112,22 @@ jobs:
           echo "path=${notes_path}" >> "$GITHUB_OUTPUT"
 
       - name: Commit release metadata and tag
+        if: steps.bump.outputs.tag_exists != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .
-          git commit -m "chore: release ${{ steps.bump.outputs.tag }}"
+          if git diff --cached --quiet; then
+            echo "No release metadata changes to commit."
+          else
+            git commit -m "chore: release ${{ steps.bump.outputs.tag }}"
+          fi
           git tag -a "${{ steps.bump.outputs.tag }}" -m "Release ${{ steps.bump.outputs.tag }}"
           git push origin HEAD:main
           git push origin "${{ steps.bump.outputs.tag }}"
 
       - name: Create GitHub release
+        if: steps.bump.outputs.tag_exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -116,13 +136,8 @@ jobs:
             --title "${{ steps.bump.outputs.tag }}" \
             --notes-file "${{ steps.notes.outputs.path }}"
 
-      - name: Publish to PyPI
-        if: env.PYPI_API_TOKEN != ''
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-          skip-existing: true
-
-      - name: Skip PyPI publish
-        if: env.PYPI_API_TOKEN == ''
-        run: echo "PYPI_API_TOKEN is not configured; skipping PyPI publish."
+      - name: Trigger trusted PyPI publishing
+        if: steps.bump.outputs.tag_exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run publish.yml --ref main -f tag="${{ steps.bump.outputs.tag }}"

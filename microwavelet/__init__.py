@@ -72,4 +72,4 @@ from ._core import analyze_lightcurve
 from ._noise import characterize_noise
 
 __all__ = ["analyze_lightcurve", "characterize_noise"]
-__version__ = "0.1.0"
+__version__ = "26.1.0"

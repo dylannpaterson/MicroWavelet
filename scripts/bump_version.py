@@ -1,4 +1,4 @@
-"""Bump the project version in pyproject.toml, __init__.py, and CITATION.cff."""
+"""Set the date-based project version in pyproject.toml, __init__.py, and CITATION.cff."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ PYPROJECT = ROOT / "pyproject.toml"
 INIT = ROOT / "microwavelet" / "__init__.py"
 CITATION = ROOT / "CITATION.cff"
 
-VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[a-zA-Z0-9._+-]*)?$")
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:\.\d+)?(?:[a-zA-Z0-9._+-]*)?$")
 
 
 def current_version() -> str:
@@ -26,19 +26,21 @@ def current_version() -> str:
         return tomllib.load(handle)["project"]["version"]
 
 
-def bump(version: str, part: str) -> str:
-    match = re.match(r"^(\d+)\.(\d+)\.(\d+)$", version)
-    if not match:
-        raise SystemExit(f"Cannot automatically bump non-semver version: {version}")
+def date_version(today: dt.date | None = None) -> str:
+    today = today or dt.date.today()
+    return f"{today.year % 100}.{today.month}.{today.day}"
 
-    major, minor, patch = (int(value) for value in match.groups())
-    if part == "major":
-        return f"{major + 1}.0.0"
-    if part == "minor":
-        return f"{major}.{minor + 1}.0"
-    if part == "patch":
-        return f"{major}.{minor}.{patch + 1}"
-    raise SystemExit(f"Unknown bump part: {part}")
+
+def next_date_version(version: str, today: dt.date | None = None) -> str:
+    base = date_version(today)
+    if version == base:
+        return f"{base}.1"
+
+    serial_match = re.match(rf"^{re.escape(base)}\.(\d+)$", version)
+    if serial_match:
+        return f"{base}.{int(serial_match.group(1)) + 1}"
+
+    return base
 
 
 def replace(path: pathlib.Path, pattern: str, replacement: str) -> None:
@@ -57,11 +59,13 @@ def update_citation(version: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--part", choices=["major", "minor", "patch"], default="patch")
-    parser.add_argument("--version", help="Exact version to set instead of bumping.")
+    parser.add_argument(
+        "--version",
+        help="Exact date-based version to set instead of using today's date.",
+    )
     args = parser.parse_args()
 
-    next_version = args.version or bump(current_version(), args.part)
+    next_version = args.version or next_date_version(current_version())
     if not VERSION_RE.match(next_version):
         raise SystemExit(f"Invalid version: {next_version}")
 

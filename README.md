@@ -189,4 +189,4 @@ If you use MicroWavelet in published work, cite the archived release DOI listed 
 
 ## Maintainer Release Notes
 
-Release and workflow instructions are documented in `RELEASE.md`.
+Release and workflow instructions are documented in `docs/RELEASE.md`.

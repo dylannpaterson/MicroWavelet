@@ -2,12 +2,13 @@
 
 This repository is set up so releases happen in GitHub Actions, not from a laptop.
 
-The maintainer should only need to:
+The maintainer should normally only need to:
 
 1. Push normal code changes to `main`.
 2. Make sure the automated tests pass.
-3. Create the required service tokens once.
-4. Run the manual `Release` workflow from GitHub.
+3. Configure PyPI Trusted Publishing once.
+4. Optionally configure a Zenodo token once.
+5. Run the manual `Release` workflow from GitHub.
 
 ## Plain-English Glossary
 
@@ -17,11 +18,14 @@ Automated jobs that run on GitHub servers. This repo uses them for testing, lint
 PyPI:
 The Python Package Index. This is where `pip install MicroWavelet` downloads the package from.
 
+Trusted Publishing:
+PyPI's tokenless publishing setup. Instead of storing a long-lived PyPI API token in GitHub, PyPI trusts one specific GitHub Actions workflow, repository, and environment. This repo uses `.github/workflows/publish.yml` with the GitHub environment named `pypi`.
+
 GitHub Release:
-A versioned release page on GitHub. It is attached to a git tag such as `v0.1.1` and contains release notes plus built package files.
+A versioned release page on GitHub. It is attached to a git tag such as `v26.5.26` and contains release notes plus built package files.
 
 Tag:
-A named pointer to one commit. Python releases normally use tags like `v0.1.1`. In this repo, the release workflow creates and pushes the tag automatically.
+A named pointer to one commit. Python releases normally use tags like `v26.5.26`. In this repo, the release workflow creates and pushes the tag automatically.
 
 Linting:
 Static checks for code style, formatting, imports, and common mistakes. This repo uses Ruff. Ruff can also automatically fix many issues.
@@ -30,7 +34,7 @@ DOI:
 A permanent citation identifier. Zenodo can reserve a DOI for a software release and this repo updates `README.md` and `CITATION.cff` when the DOI is reserved.
 
 Secret:
-A private value stored in GitHub repository settings, such as a PyPI token. The workflows can read secrets, but the values are not committed to the repository.
+A private value stored in GitHub repository settings. Zenodo uses a secret in this repo; PyPI publishing does not need one because it uses Trusted Publishing.
 
 ## Workflows in This Repo
 
@@ -38,11 +42,7 @@ A private value stored in GitHub repository settings, such as a PyPI token. The 
 
 File: `.github/workflows/test.yml`
 
-Runs automatically on:
-
-- Pushes to `main`
-- Pull requests
-- Manual runs from the GitHub Actions tab
+Runs automatically on pushes to `main`, pull requests, and manual runs from the GitHub Actions tab.
 
 What it does:
 
@@ -51,7 +51,6 @@ What it does:
 3. Runs Ruff lint validation.
 4. Runs Ruff formatting validation.
 
-Important detail:
 Tests run before linting. This means a formatting issue will not hide functional test failures.
 
 ### Apply Ruff Fixes
@@ -78,56 +77,97 @@ What it does:
 
 1. Runs tests.
 2. Applies Ruff fixes and formatting.
-3. Bumps the version in:
-   - `pyproject.toml`
-   - `microwavelet/__init__.py`
-   - `CITATION.cff`
+3. Sets the date-based version in `pyproject.toml`, `microwavelet/__init__.py`, and `CITATION.cff`.
 4. Reserves a Zenodo DOI if `ZENODO_TOKEN` is configured.
 5. Builds the source distribution and wheel.
 6. Commits the release metadata back to `main`.
-7. Creates and pushes a git tag such as `v0.1.1`.
+7. Creates and pushes a git tag such as `v26.5.26`.
 8. Creates a GitHub Release with notes generated from commits since the previous tag.
-9. Publishes to PyPI if `PYPI_API_TOKEN` is configured.
-
-If a token is missing, that part is skipped. Missing tokens should not break ordinary testing.
+9. Triggers the `Publish to PyPI` workflow only if it created a new tag.
 
 Release workflow gotcha:
 The release workflow can apply Ruff fixes before committing the release metadata. Treat that as a safety net, not the normal linting process. The latest `Test` workflow should already be green before running a release.
+
+### Publish to PyPI
+
+File: `.github/workflows/publish.yml`
+
+Runs when a `v*` tag is pushed, when manually started from the GitHub Actions tab, or when the `Release` workflow explicitly triggers it after creating a new tag.
+
+What it does:
+
+1. Checks out the released code.
+2. Sets the package version from the tag, such as `v26.5.26` -> `26.5.26`.
+3. Builds the source distribution and wheel.
+4. Publishes to PyPI with Trusted Publishing.
+
+This workflow must match the PyPI Trusted Publisher configuration:
+
+- Repository owner: the GitHub owner or organization that owns the accepted upstream repo.
+- Repository name: `MicroWavelet`
+- Workflow filename: `publish.yml`
+- Environment name: `pypi`
 
 ## One-Time Setup
 
 These setup steps must be done by the repository/package owner.
 
-### 1. Create a PyPI Account
+### 1. Create or Confirm the PyPI Account
 
-Go to <https://pypi.org/account/register/> and create an account.
+Go to <https://pypi.org/account/register/> and create an account if needed.
 
 Turn on two-factor authentication. PyPI strongly expects maintainers to use 2FA.
 
-### 2. Create the PyPI API Token
+### 2. Configure PyPI Trusted Publishing
 
-This workflow currently expects a GitHub secret named `PYPI_API_TOKEN`.
+This repo does not need a `PYPI_API_TOKEN`.
 
-For the very first publish:
+For an existing PyPI project:
 
 1. Log in to PyPI.
-2. Go to Account settings.
-3. Find API tokens.
-4. Create a new token.
-5. If the `MicroWavelet` project does not exist on PyPI yet, create an account-wide token because there is no project to scope the token to yet.
-6. Copy the token immediately. PyPI only shows it once.
+2. Open the `MicroWavelet` project.
+3. Go to Manage project.
+4. Open Publishing.
+5. Add a new GitHub trusted publisher.
+6. Use these values:
+   - Owner: the GitHub owner or organization for the accepted upstream repository.
+   - Repository name: `MicroWavelet`
+   - Workflow name: `publish.yml`
+   - Environment name: `pypi`
 
-After the first successful publish:
+For the first publish if the PyPI project does not exist yet:
 
-1. Go back to PyPI account settings.
-2. Create a new token scoped only to the `MicroWavelet` project.
-3. Replace the GitHub `PYPI_API_TOKEN` secret with the project-scoped token.
-4. Revoke the old account-wide token.
+1. Log in to PyPI.
+2. Go to your account publishing settings.
+3. Add a pending GitHub trusted publisher.
+4. Use these values:
+   - PyPI project name: `MicroWavelet`
+   - Owner: the GitHub owner or organization for the accepted upstream repository.
+   - Repository name: `MicroWavelet`
+   - Workflow name: `publish.yml`
+   - Environment name: `pypi`
 
-Why replace it:
-A project-scoped token is safer. If it leaks, it can only publish this package.
+Pending publisher gotcha:
+The PyPI project name must match the package name in `pyproject.toml`. PyPI normalizes names, but do not intentionally change the spelling during setup.
 
-### 3. Create the Zenodo Token
+### 3. Create the GitHub `pypi` Environment
+
+The publish workflow uses this line:
+
+```yaml
+environment: pypi
+```
+
+In the GitHub repository:
+
+1. Open Settings.
+2. Open Environments.
+3. Create a new environment named `pypi`.
+4. Optional but recommended: require manual approval for this environment.
+
+If approval is enabled, the PyPI publish job will pause until an approved maintainer allows it to continue.
+
+### 4. Create the Zenodo Token
 
 Zenodo is optional. If this is not configured, releases still work; they just keep the DOI as pending.
 
@@ -146,23 +186,19 @@ To enable DOI reservation:
 Optional sandbox testing:
 Zenodo has a separate sandbox at <https://sandbox.zenodo.org/>. Sandbox accounts and tokens are separate from production Zenodo. Sandbox DOIs are test DOIs and should not be used for real releases.
 
-### 4. Add Tokens as GitHub Secrets
+### 5. Add Zenodo Secrets in GitHub
 
 In the GitHub repository:
 
-1. Open the repository on GitHub.
-2. Click Settings.
-3. In the left sidebar, open Secrets and variables.
-4. Click Actions.
-5. Click New repository secret.
+1. Open Settings.
+2. Open Secrets and variables.
+3. Click Actions.
+4. Click New repository secret.
 
-Add these secrets:
-
-`PYPI_API_TOKEN`
-The PyPI token copied from PyPI. Required for PyPI publishing.
+Add these secrets only if Zenodo DOI reservation is wanted:
 
 `ZENODO_TOKEN`
-The Zenodo token copied from Zenodo. Optional; required for DOI reservation.
+The Zenodo token copied from Zenodo.
 
 `ZENODO_DEPOSITION_ID`
 Optional. Use this only if you already have an existing Zenodo deposition/concept you want new versions attached to.
@@ -170,8 +206,7 @@ Optional. Use this only if you already have an existing Zenodo deposition/concep
 Zenodo gotcha:
 The current workflow reserves a DOI and updates `README.md` and `CITATION.cff`. It does not upload files to Zenodo or publish the Zenodo record. GitHub Releases and PyPI publishing are automated; final Zenodo record management may still need to be completed in Zenodo.
 
-Important:
-Do not paste tokens into code, issues, release notes, terminal output, Slack, email, or documentation. Put them only in GitHub Secrets.
+Do not paste tokens into code, issues, release notes, terminal output, chat, email, or documentation. Put Zenodo tokens only in GitHub Secrets.
 
 ## Normal Development Flow
 
@@ -211,8 +246,8 @@ Do not create the tag locally for normal releases. The release workflow creates 
 2. Open the Actions tab.
 3. Click the `Test` workflow.
 4. Confirm the latest run on `main` passed.
-5. Confirm `PYPI_API_TOKEN` is configured if you want PyPI publishing.
-6. Confirm `ZENODO_TOKEN` is configured if you want DOI reservation.
+5. Confirm PyPI Trusted Publishing is configured for `publish.yml` and environment `pypi`.
+6. Confirm `ZENODO_TOKEN` is configured if DOI reservation is wanted.
 
 ### Run the Release Workflow
 
@@ -221,35 +256,40 @@ Do not create the tag locally for normal releases. The release workflow creates 
 3. Select `Release`.
 4. Click Run workflow.
 5. Choose the branch: `main`.
-6. Choose the version bump:
-   - `patch`: bug fixes, docs, small improvements, for example `0.1.0` to `0.1.1`
-   - `minor`: new features, for example `0.1.0` to `0.2.0`
-   - `major`: breaking changes, for example `1.2.3` to `2.0.0`
-7. Leave `exact_version` blank unless you need a specific version.
+6. Leave `exact_version` blank for the normal date-based version.
+7. Fill in `exact_version` only if you need a specific date version, such as `26.5.26` or `26.5.26.1`.
 8. Leave `zenodo_sandbox` unchecked for a real release.
 9. Click Run workflow.
+
+Date version behavior:
+The normal version for May 26, 2026 is `26.5.26`. If `26.5.26` is already the current version and another release is made the same day, the workflow uses `26.5.26.1`, then `26.5.26.2`, and so on.
+
+Existing tag behavior:
+If `exact_version` points to a tag that already exists, the workflow stops before creating a GitHub Release or publishing to PyPI. This avoids accidentally republishing an old tag.
 
 ### What Happens Next
 
 If the workflow succeeds, it will:
 
 1. Push a release commit to `main`.
-2. Push a tag like `v0.1.1`.
+2. Push a tag like `v26.5.26`.
 3. Create a GitHub Release.
 4. Upload built package files to the GitHub Release.
-5. Publish the package to PyPI if the PyPI token exists.
-6. Update DOI metadata if the Zenodo token exists.
+5. Trigger the `Publish to PyPI` workflow if the tag was newly created.
+6. Publish the package to PyPI through Trusted Publishing.
+7. Update DOI metadata if the Zenodo token exists.
 
 ### After the Release
 
 Check these pages:
 
 1. GitHub Actions: confirm the `Release` workflow is green.
-2. GitHub Releases: confirm a new release exists.
-3. PyPI: confirm the new version appears at <https://pypi.org/project/MicroWavelet/>.
-4. README: confirm the DOI badge changed if Zenodo was configured.
-5. `CITATION.cff`: confirm the version and DOI metadata changed if Zenodo was configured.
-6. Zenodo: if DOI reservation was configured, confirm whether the draft record needs any manual metadata, file upload, or publication steps in Zenodo.
+2. GitHub Actions: confirm the `Publish to PyPI` workflow is green.
+3. GitHub Releases: confirm a new release exists.
+4. PyPI: confirm the new version appears at <https://pypi.org/project/MicroWavelet/>.
+5. README: confirm the DOI badge changed if Zenodo was configured.
+6. `CITATION.cff`: confirm the version and DOI metadata changed if Zenodo was configured.
+7. Zenodo: if DOI reservation was configured, confirm whether the draft record needs any manual metadata, file upload, or publication steps in Zenodo.
 
 Test install from PyPI after PyPI has updated:
 
@@ -261,9 +301,9 @@ python -m pip install --upgrade MicroWavelet
 
 PyPI does not allow replacing an already uploaded version.
 
-If version `0.1.1` was published and you find a mistake, publish `0.1.2`. Do not try to overwrite `0.1.1`.
+If version `26.5.26` was published and you find a mistake, publish `26.5.26.1`. Do not try to overwrite `26.5.26`.
 
-The publish step uses `skip-existing`, so rerunning a release will not overwrite files already on PyPI. That protects the workflow from failing just because an artifact already exists, but it also means a bad uploaded version cannot be corrected in place.
+The publish step uses `skip-existing`, so rerunning a publish will not overwrite files already on PyPI. That protects the workflow from failing just because an artifact already exists, but it also means a bad uploaded version cannot be corrected in place.
 
 If a release is seriously broken, yank it on PyPI instead of deleting it:
 
@@ -276,16 +316,27 @@ If a release is seriously broken, yank it on PyPI instead of deleting it:
 
 ## Tags
 
-For normal releases, do not run git tag commands. The workflow handles tags.
+For normal full releases, do not run git tag commands. The `Release` workflow handles version metadata, Zenodo DOI reservation, GitHub release notes, the tag, and PyPI publishing.
 
-The workflow creates an annotated tag automatically:
+The workflow creates an annotated tag automatically, equivalent to:
 
 ```bash
-git tag -a v0.1.1 -m "Release v0.1.1"
-git push origin v0.1.1
+git tag -a v26.5.26 -m "Release v26.5.26"
+git push origin v26.5.26
 ```
 
-Those commands are shown only so you know what the workflow is doing. Running them manually before the workflow can cause the release workflow to fail or create confusing release notes.
+Those commands are shown so you know what the workflow is doing. Running them manually before the workflow can cause the release workflow to skip the GitHub release and PyPI publish for that version.
+
+For PyPI-only publishing from an existing commit, pushing a `v*` date-version tag triggers `Publish to PyPI`:
+
+```bash
+git tag -a v26.5.26 -m "Release v26.5.26"
+git push origin v26.5.26
+```
+
+That will run only the `Publish to PyPI` workflow. It will not reserve a Zenodo DOI, update committed citation metadata, or create commit-based GitHub release notes.
+
+The publish workflow sets the package version from the tag before building, so the version in `pyproject.toml` does not need to be edited manually for tag-only publishing.
 
 ## If Something Fails
 
@@ -306,13 +357,35 @@ Commit and push the changes.
 
 Or run the manual `Apply Ruff Fixes` workflow from GitHub Actions.
 
-### PyPI Publish Is Skipped
+### Publish to PyPI Is Waiting
 
-This means `PYPI_API_TOKEN` is not set. Add it as a GitHub repository secret and rerun the release workflow, or run a new patch release.
+If the GitHub `pypi` environment requires approval, approve the pending environment deployment in GitHub Actions.
+
+### Publish to PyPI Did Not Start After the Button Release
+
+The `Release` workflow explicitly starts `Publish to PyPI` after it creates a new tag. If the requested exact tag already existed, it intentionally skips PyPI publishing.
+
+If someone pushes a `v*` tag manually, that tag push should also start `Publish to PyPI`.
+
+### Publish to PyPI Fails with a Trusted Publisher Error
+
+Check that the PyPI Trusted Publisher exactly matches:
+
+- Owner
+- Repository name: `MicroWavelet`
+- Workflow name: `publish.yml`
+- Environment name: `pypi`
+
+Also check that `.github/workflows/publish.yml` has:
+
+```yaml
+permissions:
+  id-token: write
+```
 
 ### PyPI Says the Version Already Exists
 
-That version number is already taken. Bump to a new patch version and release again.
+That version number is already taken. Release again with the next date serial, such as `26.5.26.1`.
 
 ### Zenodo DOI Reservation Is Skipped
 
@@ -342,11 +415,11 @@ If PyPI already has the version, use a new version number for the next attempt.
 
 Never commit API tokens.
 
-Use repository secrets for `PYPI_API_TOKEN`, `ZENODO_TOKEN`, and `ZENODO_DEPOSITION_ID`.
+PyPI publishing should use Trusted Publishing, not a long-lived PyPI token.
+
+Use repository secrets only for `ZENODO_TOKEN` and optional `ZENODO_DEPOSITION_ID`.
 
 Do not print secrets in workflow logs.
-
-Prefer project-scoped PyPI tokens after the first release.
 
 Revoke and recreate any token that may have been copied to the wrong place.
 
@@ -374,4 +447,4 @@ python -m build
 python -m twine check dist/*
 ```
 
-Local builds are not required for release. The GitHub `Release` workflow does the real build and publish.
+Local builds are not required for release. The GitHub `Release` and `Publish to PyPI` workflows do the real build and publish.

@@ -5,7 +5,7 @@ type: software
 authors:
   - family-names: "Paterson"
     given-names: "Dylan"
-version: "0.1.0"
+version: "26.1.0"
 date-released: "2026-05-26"
 license: MIT
 repository-code: "https://github.com/dylannpaterson/MicroWavelet"

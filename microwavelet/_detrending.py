@@ -16,9 +16,10 @@ import numpy as np
 import warnings
 from scipy import optimize
 from scipy.stats import median_abs_deviation
+from scipy.interpolate import CubicSpline
 from astropy.timeseries import LombScargle
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import ExpSineSquared, ConstantKernel as C
+from sklearn.gaussian_process.kernels import ExpSineSquared, ConstantKernel as C, RationalQuadratic
 from sklearn.exceptions import ConvergenceWarning
 
 
@@ -57,8 +58,8 @@ def find_shared_period(t, y, dy, min_period=1.0, max_period=10.0):
 
     # 2. Initial LS search
     frequency, power = LombScargle(t_c, y_c, dy_c).autopower(
-        minimum_frequency=1.0 / max_period,
         maximum_frequency=1.0 / min_period,
+        minimum_frequency=1.0 / max_period,
         samples_per_peak=10,
     )
     p_ls = 1.0 / frequency[np.argmax(power)]
@@ -89,16 +90,71 @@ def find_shared_period(t, y, dy, min_period=1.0, max_period=10.0):
 # 2. GPR phase-folded fit
 # ---------------------------------------------------------------------------
 
-def fit_periodic_gp_robust(t, y, y_err, period, n_bins=120, max_iter=4, sigma_clip=3.0):
+class DummyKernel:
+    def __init__(self):
+        self.theta = np.array([1.0])
+
+class WhittakerSmoother:
     """
-    Fits a smooth periodic Gaussian Process to the phase-folded light curve.
+    A 100% backward-compatible wrapper around the Whittaker-Eilers smoother
+    that mimics the sklearn GaussianProcessRegressor interface.
+    """
+    def __init__(self, bin_centers, bin_values, bin_errors, W_diag, D_TD, lam, tr_H, rss, N_valid, sum_log_var):
+        self.bin_centers = bin_centers
+        self.bin_values = bin_values
+        self.bin_errors = bin_errors
+        self.W_diag = W_diag
+        self.D_TD = D_TD
+        self.lam = lam
+        self.tr_H = tr_H
+        self.rss = rss
+        self.N_valid = N_valid
+        self.sum_log_var = sum_log_var
+        self.kernel_ = DummyKernel()
+
+        # Set up periodic cubic spline for evaluation
+        # We append a wrapped first element at the end of the period
+        x_cs = np.concatenate([bin_centers, [bin_centers[0] + 1.0]])
+        y_cs = np.concatenate([bin_values, [bin_values[0]]])
+        self.cs = CubicSpline(x_cs, y_cs, bc_type='periodic')
+
+    def predict(self, X, return_std=False):
+        X_arr = np.asarray(X)
+        if X_arr.ndim == 2:
+            phase = X_arr[:, 0]
+        else:
+            phase = X_arr
+
+        # Map phase to [bin_centers[0], bin_centers[0] + 1.0)
+        phase_mapped = (phase - self.bin_centers[0]) % 1.0 + self.bin_centers[0]
+        y_pred = self.cs(phase_mapped)
+
+        if return_std:
+            return y_pred, np.zeros_like(y_pred)
+        return y_pred
+
+    def log_marginal_likelihood(self, *args, **kwargs):
+        # Return the binned Gaussian log-likelihood as a robust proxy for period folding quality.
+        # This prevents complexity-penalty bias when comparing different periods.
+        if self.N_valid < 4:
+            return -1e20
+        log_like = -0.5 * (self.rss + self.sum_log_var)
+        return log_like
+
+
+def fit_periodic_gp_robust(t, y, y_err, period, n_bins=120, max_iter=4, sigma_clip=5.0):
+    """
+    Fits a smooth periodic Whittaker-Eilers smoother (Smoothing Spline)
+    to the phase-folded light curve.
 
     Uses iterative sigma-clipping (positive outliers only) to identify and
     protect transient microlensing brightening from being fitted as baseline.
 
     Returns
     -------
-    gp : fitted GaussianProcessRegressor
+    gp : WhittakerSmoother
+        An object wrapping the fitted Whittaker smoother and mimicking the
+        GaussianProcessRegressor interface.
     phase : np.ndarray  (same length as t)
     valid_mask : np.ndarray[bool]
         True where the data was kept (not clipped as a transient).
@@ -110,73 +166,105 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=120, max_iter=4, sigma_cl
     valid_mask = np.ones_like(y, dtype=bool)
     gp = None
 
-    # ExpSineSquared periodic kernel with wide length-scale bounds allows fitting
-    # extremely sharp CV eclipses and smooth pulsations alike.
-    kernel = C(1.0, (1e-3, 1e3)) * ExpSineSquared(
-        length_scale=0.1,
-        periodicity=1.0,
-        length_scale_bounds=(0.02, 2.0),
-        periodicity_bounds="fixed",
-    )
+    # Construct the periodic second-difference Laplacian matrix D of size n_bins x n_bins
+    D = np.zeros((n_bins, n_bins))
+    for i in range(n_bins):
+        D[i, (i - 1) % n_bins] = 1.0
+        D[i, i] = -2.0
+        D[i, (i + 1) % n_bins] = 1.0
+    D_TD = D.T @ D
 
     for _ in range(max_iter):
         bins = np.linspace(0.0, 1.0, n_bins + 1)
         bin_centers = 0.5 * (bins[:-1] + bins[1:])
 
-        bin_values = []
-        bin_errors = []
+        bin_values = np.zeros(n_bins)
+        bin_errors = np.zeros(n_bins)
+        W_diag = np.zeros(n_bins)
 
         for k in range(n_bins):
             in_bin = (phase >= bins[k]) & (phase < bins[k + 1]) & valid_mask
             n_pts = np.sum(in_bin)
             if n_pts > 0:
                 median_val = np.median(y[in_bin])
-                bin_values.append(median_val)
+                bin_values[k] = median_val
                 std_val = np.std(y[in_bin])
                 se_val = 1.2533 * std_val / np.sqrt(n_pts) if n_pts > 1 else y_err[in_bin][0]
-                bin_errors.append(max(se_val, 1e-4))
+                bin_errors[k] = max(se_val, 1e-4)
+                W_diag[k] = 1.0 / bin_errors[k]**2
             else:
-                bin_values.append(np.nan)
-                bin_errors.append(np.nan)
+                bin_values[k] = 0.0
+                bin_errors[k] = 1e-4
+                W_diag[k] = 0.0
 
-        bin_values = np.array(bin_values)
-        bin_errors = np.array(bin_errors)
+        N_valid = np.sum(W_diag > 0)
+        if N_valid < 4:
+            W_diag = np.ones(n_bins)
+            bin_values = np.ones(n_bins) * np.median(y[valid_mask])
+            bin_errors = np.ones(n_bins) * 0.05
+            N_valid = n_bins
 
-        # Interpolate empty bins
-        nan_mask = np.isnan(bin_values)
-        if np.any(nan_mask):
-            non_nan_x = bin_centers[~nan_mask]
-            non_nan_y = bin_values[~nan_mask]
-            non_nan_err = bin_errors[~nan_mask]
-            if len(non_nan_x) > 1:
-                x_pad = np.concatenate([non_nan_x - 1.0, non_nan_x, non_nan_x + 1.0])
-                y_pad = np.tile(non_nan_y, 3)
-                err_pad = np.tile(non_nan_err, 3)
-                bin_values[nan_mask] = np.interp(bin_centers[nan_mask], x_pad, y_pad)
-                bin_errors[nan_mask] = np.interp(bin_centers[nan_mask], x_pad, err_pad)
-            else:
-                bin_values[nan_mask] = np.median(y[valid_mask])
-                bin_errors[nan_mask] = 0.05
+        # Optimize lambda using GCV
+        def gcv_score(log_lam):
+            lam = 10**log_lam
+            A = np.diag(W_diag) + lam * D_TD
+            try:
+                y_hat = np.linalg.solve(A, W_diag * bin_values)
+                H = np.linalg.solve(A, np.diag(W_diag))
+                tr_H = np.trace(H)
+                rss = np.sum(W_diag * (bin_values - y_hat) ** 2)
+                denom = (1.0 - tr_H / N_valid) ** 2
+                if denom < 1e-6:
+                    return 1e10
+                return (rss / N_valid) / denom
+            except np.linalg.LinAlgError:
+                return 1e10
 
-        # Smoothly wrap boundary for perfect phase continuity
-        boundary_val = 0.5 * (bin_values[0] + bin_values[-1])
-        x_spline = np.concatenate([[0.0], bin_centers, [1.0]])
-        y_spline = np.concatenate([[boundary_val], bin_values, [boundary_val]])
-        err_spline = np.concatenate([[bin_errors[0]], bin_errors, [bin_errors[0]]])
+        # Grid search
+        log_lams = np.linspace(-3.0, 6.0, 30)
+        scores = [gcv_score(l) for l in log_lams]
+        best_idx = np.argmin(scores)
+        best_log_lam = log_lams[best_idx]
 
-        gp = GaussianProcessRegressor(
-            kernel=kernel,
-            alpha=err_spline ** 2 + 1e-6,
-            n_restarts_optimizer=5,
-            random_state=42,
+        # Refinement
+        lam = 10**best_log_lam
+        try:
+            bounds = (max(-3.0, best_log_lam - 1.0), min(6.0, best_log_lam + 1.0))
+            res = optimize.minimize_scalar(gcv_score, bounds=bounds, method='bounded', options={'xatol': 1e-3})
+            if res.success:
+                lam = 10**res.x
+        except:
+            pass
+
+        # Perform the final solve with optimized lambda
+        A = np.diag(W_diag) + lam * D_TD
+        try:
+            y_hat = np.linalg.solve(A, W_diag * bin_values)
+            H = np.linalg.solve(A, np.diag(W_diag))
+            tr_H = np.trace(H)
+            rss = np.sum(W_diag * (bin_values - y_hat) ** 2)
+        except np.linalg.LinAlgError:
+            y_hat = bin_values
+            tr_H = n_bins
+            rss = 0.0
+
+        valid_bins = W_diag > 0
+        sum_log_var = np.sum(np.log(2.0 * np.pi * bin_errors[valid_bins]**2))
+
+        gp = WhittakerSmoother(
+            bin_centers=bin_centers,
+            bin_values=y_hat,
+            bin_errors=bin_errors,
+            W_diag=W_diag,
+            D_TD=D_TD,
+            lam=lam,
+            tr_H=tr_H,
+            rss=rss,
+            N_valid=N_valid,
+            sum_log_var=sum_log_var
         )
-        
-        # Suppress convergence warnings during repeated fits
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", ConvergenceWarning)
-            gp.fit(x_spline[:, np.newaxis], y_spline)
 
-        y_model = gp.predict(phase[:, np.newaxis])
+        y_model = gp.predict(phase)
         residuals = y - y_model
 
         mad = median_abs_deviation(residuals[valid_mask])

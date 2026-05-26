@@ -7,6 +7,7 @@ def paczynski(t, t0, tE, u0, baseline=1.0):
     return baseline * A
 
 def test_new_features():
+    np.random.seed(42)
     # 1. Create a synthetic light curve with an event in the middle and an event near the edge
     t_obs = np.arange(0, 100, 0.1)
     

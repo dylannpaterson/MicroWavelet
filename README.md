@@ -2,7 +2,7 @@
 
 `MicroWavelet` is a Python library for the detection of transient anomalies in multi-filter light curves using Continuous Wavelet Transform (CWT) methodologies. The package is optimized for microlensing signals but is applicable to general peak and dip detection in time-series data.
 
-The library implements a scale-space search using Paczynski-profile wavelet kernels, integrated with Gaussian Process Regression (GPR) detrending and multi-band chromaticity analysis.
+The library implements a scale-space search using Paczynski-profile wavelet kernels, integrated with robust Whittaker-Eilers (Smoothing Spline) detrending and multi-band chromaticity analysis.
 
 ## Mathematical Framework
 
@@ -46,11 +46,13 @@ For each candidate detection, the library performs a weighted linear least-squar
 The primary band signal is projected onto secondary filters using a local weighted linear fit. The resulting `chromaticity_ratio` ($\mathcal{R} = F_{s,\text{other}} / F_{s,\text{primary}}$) and `chromatic_flag` facilitate the identification of non-achromatic signals, such as stellar flares or instrumental systematic effects.
 
 ### 6. Periodic Baseline Detrending
-For observations of variable stars (e.g., RR Lyrae, eclipsing binaries), the library provides a robust, multi-stage detrending pipeline:
+For observations of variable stars (e.g., RR Lyrae, eclipsing binaries), the library provides a highly optimized, multi-stage Whittaker-Eilers (Smoothing Spline) detrending pipeline:
 1.  **Robust Period Search**: Performs an initial Lomb-Scargle search on a "cleaned" version of the light curve where large positive transients (like microlensing events) are masked using a 2.5-sigma MAD threshold.
-2.  **Bayesian Period Selection**: Implements an iterative halving strategy to find the fundamental period. Candidates ($P/2, P, 2P$) are evaluated using the **Log-Marginal Likelihood (LML)** of a full GP fit, providing an Occam's Razor for selecting the simplest model that explains the data.
-3.  **Iterative GP Optimization**: The period is fine-tuned using a non-linear optimizer that performs a full robust Gaussian Process fit at every iteration, minimizing the residual RMS of the phase-folded baseline.
-4.  **Normalization**: The raw flux is divided by the converged GP baseline model to isolate the stationary transient signal for CWT analysis.
+2.  **Bayesian Period Selection**: Implements an iterative halving strategy to find the fundamental period. Candidates ($P/2, P, 2P$) are evaluated using a binned **Gaussian Log-Likelihood** proxy:
+    $$\ln L = -0.5 \left( RSS + \sum_{k \in \text{valid}} \ln(2\pi \sigma_k^2) \right)$$
+    This incorporates a sum-of-log-variances term that mirrors the noise determinant of Gaussian Processes to penalize poorly-folded periods (which exhibit high phase scatter and large bin errors $\sigma_k$) without complexity-penalty bias.
+3.  **Iterative Whittaker Optimization**: The period is fine-tuned using a non-linear scalar optimizer that fits a robust Whittaker-Eilers smoother with circular boundary conditions and Generalized Cross-Validation (GCV) optimal smoothing parameter $\lambda$ selection at each iteration.
+4.  **Normalization**: The raw flux is divided by the converged periodic Whittaker baseline model to isolate the stationary transient signal for CWT analysis.
 
 ---
 
@@ -111,12 +113,12 @@ The following plot illustrates the CWT detection process and subsequent parametr
 *   **Bottom Panel**: Scale-space consensus SNR for symmetric (even) and asymmetric (odd) morphologies relative to the detection threshold.
 
 ### Periodic Baseline Removal
-For variable sources, the iterative GPR pipeline isolates the periodic modulation to recover the underlying transient signal:
+For variable sources, the iterative Whittaker detrending pipeline isolates the periodic modulation to recover the underlying transient signal:
 
 ![MicroWavelet Detrending Demonstration](docs/detrend_demo.png)
 
 *   **Step 1: Robust Period Search**: Raw data with identified transient points highlighted.
-*   **Step 2: GPR Modeling**: The converged baseline model in phase-folded space.
+*   **Step 2: Whittaker Modeling**: The converged baseline model in phase-folded space.
 *   **Step 3: Recovered Signal**: The final detrended light curve with the isolated microlensing event.
 
 ---

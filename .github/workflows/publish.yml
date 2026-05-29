@@ -4,11 +4,16 @@ name: Publish to PyPI
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish, for example v26.5.26."
+        required: true
+        type: string
 
 jobs:
   pypi-publish:
     name: Build and publish to PyPI
-    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
 
     # Specifies the environment we set up in PyPI
@@ -23,7 +28,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -35,17 +40,13 @@ jobs:
 
       - name: Set package version from tag
         run: |
-          TAG="${{ inputs.tag }}"
-          if [ -z "${TAG}" ]; then
-            TAG="${GITHUB_REF_NAME}"
-          fi
+          TAG="${{ inputs.tag || github.event.release.tag_name }}"
           VERSION="${TAG#v}"
           if [ -z "${VERSION}" ] || [ "${VERSION}" = "${TAG}" ]; then
             echo "Publish workflow requires a v-prefixed tag, got: ${TAG}"
             exit 1
           fi
           python scripts/bump_version.py --version "${VERSION}"
-
 
       - name: Build the package (sdist and wheel)
         run: python -m build

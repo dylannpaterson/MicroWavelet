@@ -73,7 +73,15 @@ For observations of variable stars (e.g., RR Lyrae, eclipsing binaries), the lib
 4.  **Iterative Whittaker Optimization**: The period is fine-tuned using a non-linear scalar optimizer that fits a robust Whittaker-Eilers smoother with circular boundary conditions and Generalized Cross-Validation (GCV) optimal smoothing parameter $\lambda$ selection at each iteration.
 5.  **Normalization**: The raw flux is divided by the converged periodic Whittaker baseline model to isolate the stationary transient signal for CWT analysis.
 
+### 7. Cumulative Sum (CUSUM) Anomaly Detection
+
+To detect abrupt shifts or persistent deviations from a flat baseline (e.g., weak or fast microlensing signals, sharp magnification peaks), the library provides cumulative sum (CUSUM) detection routines:
+*   **Linear CUSUM (`run_linear_cusum`)**: Accumulates positive residual deviations, particularly useful for detecting magnification peaks.
+*   **Quadratic CUSUM (`run_quadratic_cusum`)**: Accumulates variance excess above the expected baseline noise level.
+*   **CUSUM-based Parameter Seeding (`seed_by_flat_cusum`)**: Analyzes the standardized residuals from a flat baseline median fit to trigger anomaly signals. If the threshold is exceeded, it determines the peak time (`t0`) and estimates the event duration to seed the Einstein crossing time (`tE`).
+
 ---
+
 
 ## Installation
 
@@ -129,6 +137,28 @@ results = analyze_lightcurve(
 for anomaly in results["anomalies"]:
     print(f"Candidate t0: {anomaly['t0']:.3f}")
     print(f"Timescale tE: {anomaly['tE']:.2f} (u0: {anomaly['u0']:.3f})")
+```
+
+### Direct CUSUM Usage Example
+
+You can also import and run the cumulative sum algorithms directly on a sequence of standardized residuals or raw light curve arrays:
+
+```python
+from microwavelet import run_linear_cusum, seed_by_flat_cusum
+
+# Compute standardized residuals manually
+y_base = np.median(y)
+residuals = (y - y_base) / y_err
+
+# 1. Run linear CUSUM
+cusum_scores = run_linear_cusum(residuals, k=1.0)
+
+# 2. Seed parameters using the flat CUSUM routine
+t0_seed, tE_seed, triggered = seed_by_flat_cusum(
+    t, y, y_err, method='linear', k=1.0, threshold=10.0
+)
+if triggered:
+    print(f"CUSUM anomaly triggered! Seed t0={t0_seed:.3f}, tE={tE_seed:.3f}")
 ```
 
 ---

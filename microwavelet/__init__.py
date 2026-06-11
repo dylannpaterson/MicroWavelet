@@ -69,7 +69,14 @@ Output schema
 """
 
 from ._core import analyze_lightcurve
+from ._cusum import run_linear_cusum, run_quadratic_cusum, seed_by_flat_cusum
 from ._noise import characterize_noise
 
-__all__ = ["analyze_lightcurve", "characterize_noise"]
+__all__ = [
+    "analyze_lightcurve",
+    "characterize_noise",
+    "run_linear_cusum",
+    "run_quadratic_cusum",
+    "seed_by_flat_cusum",
+]
 __version__ = "26.1.0"

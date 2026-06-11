@@ -79,6 +79,7 @@ To detect abrupt shifts or persistent deviations from a flat baseline (e.g., wea
 *   **Linear CUSUM (`run_linear_cusum`)**: Accumulates positive residual deviations, particularly useful for detecting magnification peaks.
 *   **Quadratic CUSUM (`run_quadratic_cusum`)**: Accumulates variance excess above the expected baseline noise level.
 *   **CUSUM-based Parameter Seeding (`seed_by_flat_cusum`)**: Analyzes the standardized residuals from a flat baseline median fit to trigger anomaly signals. If the threshold is exceeded, it determines the peak time (`t0`) and estimates the event duration to seed the Einstein crossing time (`tE`).
+*   **CUSUM-based Anomaly Detection (`find_anomalies_cusum`)**: Runs quadratic CUSUM on standardized residuals and extracts anomaly properties, including the peak time (`t0`), trigger status, onset/end times, signal duration, and local noise standard deviation.
 
 ---
 
@@ -144,7 +145,7 @@ for anomaly in results["anomalies"]:
 You can also import and run the cumulative sum algorithms directly on a sequence of standardized residuals or raw light curve arrays:
 
 ```python
-from microwavelet import run_linear_cusum, seed_by_flat_cusum
+from microwavelet import run_linear_cusum, seed_by_flat_cusum, find_anomalies_cusum
 
 # Compute standardized residuals manually
 y_base = np.median(y)
@@ -159,6 +160,12 @@ t0_seed, tE_seed, triggered = seed_by_flat_cusum(
 )
 if triggered:
     print(f"CUSUM anomaly triggered! Seed t0={t0_seed:.3f}, tE={tE_seed:.3f}")
+
+# 3. Detect and extract anomaly details using quadratic CUSUM
+anomaly_details = find_anomalies_cusum(t, residuals, threshold=25.0, k=2.0)
+if anomaly_details["triggered"]:
+    print(f"Anomaly detected! Score: {anomaly_details['score']:.2f}")
+    print(f"t0: {anomaly_details['t0']:.3f}, Duration: {anomaly_details['duration']:.3f}")
 ```
 
 ---

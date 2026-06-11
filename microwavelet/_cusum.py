@@ -114,3 +114,78 @@ def seed_by_flat_cusum(t, y, y_err, method="linear", k=1.0, threshold=10.0):
     tE_seed = float(max(duration / 4.0, 2.0))
 
     return t0_seed, tE_seed, True
+
+
+def find_anomalies_cusum(t, residuals_sigma, threshold=25.0, k=2.0):
+    """
+    Detect anomalies in residuals using quadratic CUSUM and extract their properties.
+
+    Parameters
+    ----------
+    t : np.ndarray
+        Time array (BJD).
+    residuals_sigma : np.ndarray
+        Standardized residuals: (y_data - y_model) / y_err
+    threshold : float, default 25.0
+        Significance threshold (H) for CUSUM.
+    k : float, default 2.0
+        CUSUM slack parameter.
+
+    Returns
+    -------
+    dict
+        Properties of the detected anomaly:
+        {
+            'triggered': bool,
+            'score': float,
+            't0': float or None,
+            'onset': float or None,
+            'end': float or None,
+            'duration': float,
+            'residuals_std': float,
+            'cusum_statistic': np.ndarray
+        }
+    """
+    S = run_quadratic_cusum(residuals_sigma, k=k)
+    max_score = float(np.max(S))
+    max_idx = np.argmax(S)
+
+    if max_score < threshold:
+        return {
+            "triggered": False,
+            "score": max_score,
+            "t0": None,
+            "onset": None,
+            "end": None,
+            "duration": 0.0,
+            "residuals_std": 1.0,
+            "cusum_statistic": S,
+        }
+
+    # Trace backward to find the onset
+    onset_idx = max_idx
+    while onset_idx > 0 and S[onset_idx] > 0.0:
+        onset_idx -= 1
+
+    t_onset = float(t[onset_idx])
+    t_end = float(t[max_idx])
+    duration = t_end - t_onset
+
+    # Peak is the maximum absolute residual inside the window
+    window_res = np.abs(residuals_sigma[onset_idx : max_idx + 1])
+    peak_offset = np.argmax(window_res)
+    t0_anomaly = float(t[onset_idx + peak_offset])
+
+    # Standard deviation of the residuals inside the physical window
+    residuals_std = float(np.std(residuals_sigma[onset_idx : max_idx + 1]))
+
+    return {
+        "triggered": True,
+        "score": max_score,
+        "t0": t0_anomaly,
+        "onset": t_onset,
+        "end": t_end,
+        "duration": duration,
+        "residuals_std": residuals_std,
+        "cusum_statistic": S,
+    }

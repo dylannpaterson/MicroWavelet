@@ -69,7 +69,7 @@ Output schema
 """
 
 from ._core import analyze_lightcurve
-from ._cusum import run_linear_cusum, run_quadratic_cusum, seed_by_flat_cusum
+from ._cusum import find_anomalies_cusum, run_linear_cusum, run_quadratic_cusum, seed_by_flat_cusum
 from ._noise import characterize_noise
 
 __all__ = [
@@ -78,5 +78,6 @@ __all__ = [
     "run_linear_cusum",
     "run_quadratic_cusum",
     "seed_by_flat_cusum",
+    "find_anomalies_cusum",
 ]
 __version__ = "26.1.0"

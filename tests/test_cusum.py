@@ -1,6 +1,11 @@
 import numpy as np
 
-from microwavelet import run_linear_cusum, run_quadratic_cusum, seed_by_flat_cusum
+from microwavelet import (
+    find_anomalies_cusum,
+    run_linear_cusum,
+    run_quadratic_cusum,
+    seed_by_flat_cusum,
+)
 
 
 def test_linear_cusum():
@@ -51,3 +56,28 @@ def test_seed_by_flat_cusum():
         t, y_noise, y_err, method="linear", k=1.0, threshold=50.0
     )
     assert not triggered_n
+
+
+def test_find_anomalies_cusum():
+    t = np.arange(0, 50, 1.0)
+    residuals_sigma = np.zeros_like(t)
+    # Add a strong signal to trigger quadratic CUSUM
+    # With k=1.0, we want S to exceed a threshold of 10.0
+    residuals_sigma[23:28] = [2.0, 4.0, 5.0, 4.0, 2.0]
+
+    # Run find_anomalies_cusum
+    res = find_anomalies_cusum(t, residuals_sigma, threshold=10.0, k=1.0)
+
+    assert res["triggered"]
+    assert res["score"] > 10.0
+    assert abs(res["t0"] - 25.0) < 0.1
+    assert res["onset"] <= 25.0
+    assert res["end"] >= 25.0
+    assert res["duration"] > 0.0
+    assert res["residuals_std"] > 1.0
+    assert len(res["cusum_statistic"]) == len(t)
+
+    # Test non-triggered
+    res_n = find_anomalies_cusum(t, residuals_sigma, threshold=500.0, k=1.0)
+    assert not res_n["triggered"]
+    assert res_n["t0"] is None

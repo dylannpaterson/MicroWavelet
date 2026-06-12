@@ -41,7 +41,7 @@ def _objective(params, t, y, y_err):
     chi2, fs, fb = pspl_linear_fit(t, y, y_err, t0, u0, tE)
     return chi2
 
-def detect_anomalies_with_fit(t, y, y_err, threshold=25.0, k=2.0):
+def detect_anomalies_with_fit(t, y, y_err, threshold=25.0, k=2.0, threshold_slow=35.0, k_slow=0.5):
     """
     Unified microlensing pipeline: performs CUSUM-seeded multi-start PSPL fitting,
     calculates residuals, and runs the CUSUM change-point anomaly detector on them.
@@ -58,6 +58,10 @@ def detect_anomalies_with_fit(t, y, y_err, threshold=25.0, k=2.0):
         Significance threshold (H) for CUSUM anomaly detection.
     k : float, default 2.0
         CUSUM slack parameter.
+    threshold_slow : float, default 35.0
+        Significance threshold (H) for slow CUSUM anomaly detection.
+    k_slow : float, default 0.5
+        CUSUM slack parameter for slow channel.
 
     Returns
     -------
@@ -137,13 +141,22 @@ def detect_anomalies_with_fit(t, y, y_err, threshold=25.0, k=2.0):
     y_model_pts = fs * get_paczynski(u_pts) + fb
     residuals_sigma = (y - y_model_pts) / y_err
     
-    # 3. Detect anomalies in residuals
-    anom = find_anomalies_cusum(t, residuals_sigma, threshold=threshold, k=k)
+    # 3. Detect anomalies in residuals (both fast/narrow and slow/gentle configurations)
+    anom_fast = find_anomalies_cusum(t, residuals_sigma, threshold=threshold, k=k)
+    anom_slow = find_anomalies_cusum(t, residuals_sigma, threshold=threshold_slow, k=k_slow)
     
     # 4. Format outputs
     N = len(t)
     dchi2_excess = best_overall_chi2 - (N - 3)
     
+    master_triggered = bool(anom_fast['triggered'] or anom_slow['triggered'])
+    if anom_fast['triggered']:
+        master_anom = anom_fast
+    elif anom_slow['triggered']:
+        master_anom = anom_slow
+    else:
+        master_anom = anom_fast
+        
     return {
         'pspl_fit': {
             't0': float(fit_t0),
@@ -155,13 +168,33 @@ def detect_anomalies_with_fit(t, y, y_err, threshold=25.0, k=2.0):
             'dchi2_excess': float(dchi2_excess)
         },
         'anomaly': {
-            'triggered': bool(anom['triggered']),
-            'score': float(anom['score']),
-            't0': float(anom['t0']) if anom['triggered'] else float(fit_t0),
-            'onset': float(anom['onset']) if anom['triggered'] else float(fit_t0),
-            'end': float(anom['end']) if anom['triggered'] else float(fit_t0),
-            'duration': float(anom['duration']),
-            'residuals_std': float(anom['residuals_std']),
-            'cusum_statistic': anom['cusum_statistic']
+            'triggered': master_triggered,
+            'score': float(master_anom['score']),
+            't0': float(master_anom['t0']) if master_triggered else float(fit_t0),
+            'onset': float(master_anom['onset']) if master_triggered else float(fit_t0),
+            'end': float(master_anom['end']) if master_triggered else float(fit_t0),
+            'duration': float(master_anom['duration']),
+            'residuals_std': float(master_anom['residuals_std']),
+            'cusum_statistic': master_anom['cusum_statistic']
+        },
+        'anomaly_fast': {
+            'triggered': bool(anom_fast['triggered']),
+            'score': float(anom_fast['score']),
+            't0': float(anom_fast['t0']) if anom_fast['triggered'] else float(fit_t0),
+            'onset': float(anom_fast['onset']) if anom_fast['triggered'] else float(fit_t0),
+            'end': float(anom_fast['end']) if anom_fast['triggered'] else float(fit_t0),
+            'duration': float(anom_fast['duration']),
+            'residuals_std': float(anom_fast['residuals_std']),
+            'cusum_statistic': anom_fast['cusum_statistic']
+        },
+        'anomaly_slow': {
+            'triggered': bool(anom_slow['triggered']),
+            'score': float(anom_slow['score']),
+            't0': float(anom_slow['t0']) if anom_slow['triggered'] else float(fit_t0),
+            'onset': float(anom_slow['onset']) if anom_slow['triggered'] else float(fit_t0),
+            'end': float(anom_slow['end']) if anom_slow['triggered'] else float(fit_t0),
+            'duration': float(anom_slow['duration']),
+            'residuals_std': float(anom_slow['residuals_std']),
+            'cusum_statistic': anom_slow['cusum_statistic']
         }
     }

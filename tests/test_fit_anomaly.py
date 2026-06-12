@@ -68,3 +68,33 @@ def test_detect_anomalies_with_fit_with_anomaly():
     assert anom['score'] > 15.0
     assert abs(anom['t0'] - 5.0) < 0.5
     assert anom['duration'] > 0.0
+
+def test_detect_anomalies_dual_channel():
+    t = np.linspace(-20, 20, 400)
+    u = np.sqrt(0.3**2 + (t / 5.0)**2)
+    u_abs = np.maximum(np.abs(u), 1e-8)
+    A = (u_abs**2 + 2) / (u_abs * np.sqrt(u_abs**2 + 4))
+    
+    fs = 0.2
+    fb = 0.8
+    y_true = fs * A + fb
+    
+    # Add a gentle anomaly at t >= 10.0
+    anomaly_mask = (t >= 10.0) & (t <= 15.0)
+    y_true[anomaly_mask] += 0.003  # subtle, gentle deviation
+    
+    np.random.seed(42)
+    y_err = np.ones_like(t) * 0.002
+    y = y_true + np.random.normal(0, 0.002, len(t))
+    
+    res = detect_anomalies_with_fit(
+        t, y, y_err, 
+        threshold=25.0, k=2.0,            # Fast channel (should NOT trigger)
+        threshold_slow=15.0, k_slow=0.5   # Slow channel (should trigger)
+    )
+    
+    assert 'anomaly_fast' in res
+    assert 'anomaly_slow' in res
+    
+    assert not res['anomaly_fast']['triggered']
+    assert res['anomaly_slow']['triggered']

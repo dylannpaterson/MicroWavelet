@@ -51,7 +51,7 @@ def run_quadratic_cusum(r, k=2.0):
     return S
 
 
-def seed_by_flat_cusum(t, y, y_err, method="linear", k=1.0, threshold=10.0):
+def seed_by_flat_cusum(t, y, y_err, method="linear", k=1.0, threshold=10.0, return_all=False):
     """
     Estimate rough lensing parameters t0 and tE from a flat baseline fit using CUSUM.
 
@@ -69,15 +69,18 @@ def seed_by_flat_cusum(t, y, y_err, method="linear", k=1.0, threshold=10.0):
         Slack parameter for CUSUM.
     threshold : float, default 10.0
         Significance threshold (H) for CUSUM triggering.
+    return_all : bool, default False
+        If True, return all triggering candidate seeds as a list of (t0, tE) tuples.
+        If False, return the single most significant seed as (t0, tE, triggered).
 
     Returns
     -------
-    t0_seed : float
-        Seed value for peak time t0.
-    tE_seed : float
-        Seed value for Einstein time tE.
-    triggered : bool
-        True if CUSUM exceeded the significance threshold.
+    If return_all is False:
+        t0_seed : float
+        tE_seed : float
+        triggered : bool
+    If return_all is True:
+        list of (t0_seed, tE_seed) tuples
     """
     # Estimate robust baseline using median (flux excess assumption)
     y_base = np.median(y)
@@ -90,30 +93,58 @@ def seed_by_flat_cusum(t, y, y_err, method="linear", k=1.0, threshold=10.0):
     else:
         raise ValueError("Method must be 'linear' or 'quadratic'")
 
-    max_score = np.max(S)
-    if max_score < threshold:
-        # Fallback: simple peak flux finding
-        peak_idx = np.argmax(y)
-        return float(t[peak_idx]), 20.0, False
+    # Find contiguous triggered regions where S > 0
+    is_triggered = S > 0.0
+    changes = np.diff(is_triggered.astype(int))
+    starts = np.where(changes == 1)[0] + 1
+    ends = np.where(changes == -1)[0] + 1
+    
+    if is_triggered[0]:
+        starts = np.insert(starts, 0, 0)
+    if is_triggered[-1]:
+        ends = np.append(ends, len(S))
 
-    max_idx = np.argmax(S)
-    onset_idx = max_idx
-    while onset_idx > 0 and S[onset_idx] > 0.0:
-        onset_idx -= 1
+    candidates = []
+    for start_idx, end_idx in zip(starts, ends):
+        sub_S = S[start_idx:end_idx]
+        max_val = np.max(sub_S)
+        if max_val >= threshold:
+            max_offset = np.argmax(sub_S)
+            max_idx = start_idx + max_offset
+            onset_idx = max(0, start_idx - 1)
+            
+            t_onset = t[onset_idx]
+            t_end = t[max_idx]
+            duration = t_end - t_onset
+            tE_seed = float(max(duration / 4.0, 2.0))
+            
+            # 1. Primary candidate: peak absolute residual in the triggered region
+            peak_offset = np.argmax(np.abs(r[onset_idx : max_idx + 1]))
+            t0_seed = float(t[onset_idx + peak_offset])
+            candidates.append((t0_seed, tE_seed, float(max_val)))
+            
+            # 2. If the CUSUM window is wide, add grid checkpoints across the window to prevent local min trapping
+            if duration > 10.0:
+                for frac in [0.25, 0.50, 0.75]:
+                    t_frac = t_onset + frac * duration
+                    candidates.append((float(t_frac), tE_seed, float(max_val) - 1e-5))
 
-    t_onset = t[onset_idx]
-    t_end = t[max_idx]
+    # Sort candidates by CUSUM score descending
+    candidates = sorted(candidates, key=lambda x: x[2], reverse=True)
 
-    # Peak is the maximum absolute residual within the CUSUM window
-    window_r = r[onset_idx : max_idx + 1]
-    peak_offset = np.argmax(np.abs(window_r))
-    t0_seed = float(t[onset_idx + peak_offset])
-
-    # Einstein time estimate based on CUSUM window duration
-    duration = t_end - t_onset
-    tE_seed = float(max(duration / 4.0, 2.0))
-
-    return t0_seed, tE_seed, True
+    if return_all:
+        if len(candidates) > 0:
+            return [(c[0], c[1]) for c in candidates]
+        else:
+            peak_idx = np.argmax(y)
+            return [(float(t[peak_idx]), 20.0)]
+    else:
+        if len(candidates) > 0:
+            return candidates[0][0], candidates[0][1], True
+        else:
+            # Fallback: simple peak flux finding
+            peak_idx = np.argmax(y)
+            return float(t[peak_idx]), 20.0, False
 
 
 def find_anomalies_cusum(t, residuals_sigma, threshold=25.0, k=2.0):

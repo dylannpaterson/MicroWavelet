@@ -1,0 +1,70 @@
+import numpy as np
+from microwavelet import detect_anomalies_with_fit
+
+def test_detect_anomalies_with_fit_quiet():
+    # Generate a quiet PSPL event
+    t = np.linspace(-20, 20, 400)
+    # True parameters: t0=0.0, u0=0.3, tE=5.0
+    u = np.sqrt(0.3**2 + (t / 5.0)**2)
+    # Paczynski magnification A
+    u_abs = np.maximum(np.abs(u), 1e-8)
+    A = (u_abs**2 + 2) / (u_abs * np.sqrt(u_abs**2 + 4))
+    
+    fs = 0.2
+    fb = 0.8
+    y_true = fs * A + fb
+    
+    # Add small Gaussian noise
+    np.random.seed(42)
+    y_err = np.ones_like(t) * 0.005
+    y = y_true + np.random.normal(0, 0.005, len(t))
+    
+    res = detect_anomalies_with_fit(t, y, y_err, threshold=25.0, k=2.0)
+    
+    # Check schema
+    assert 'pspl_fit' in res
+    assert 'anomaly' in res
+    
+    fit = res['pspl_fit']
+    assert abs(fit['t0'] - 0.0) < 0.2
+    assert abs(fit['u0'] - 0.3) < 0.1
+    assert abs(fit['tE'] - 5.0) < 1.0
+    assert abs(fit['fs'] - 0.2) < 0.05
+    assert abs(fit['fb'] - 0.8) < 0.05
+    
+    anom = res['anomaly']
+    assert not anom['triggered']
+    assert anom['score'] < 25.0
+
+def test_detect_anomalies_with_fit_with_anomaly():
+    # Generate a PSPL event with a sharp localized anomaly (planetary spike)
+    t = np.linspace(-20, 20, 400)
+    # True parameters: t0=0.0, u0=0.3, tE=5.0
+    u = np.sqrt(0.3**2 + (t / 5.0)**2)
+    u_abs = np.maximum(np.abs(u), 1e-8)
+    A = (u_abs**2 + 2) / (u_abs * np.sqrt(u_abs**2 + 4))
+    
+    fs = 0.2
+    fb = 0.8
+    y_true = fs * A + fb
+    
+    # Add a massive anomaly at t=5.0 (index 250)
+    # Spike height = 0.1, duration = 0.5 days
+    anomaly_mask = (t >= 4.75) & (t <= 5.25)
+    y_true[anomaly_mask] += 0.08
+    
+    np.random.seed(42)
+    y_err = np.ones_like(t) * 0.002
+    y = y_true + np.random.normal(0, 0.002, len(t))
+    
+    res = detect_anomalies_with_fit(t, y, y_err, threshold=15.0, k=1.0)
+    
+    fit = res['pspl_fit']
+    # The fitter should still find a reasonable overall fit
+    assert abs(fit['t0'] - 0.0) < 1.0
+    
+    anom = res['anomaly']
+    assert anom['triggered']
+    assert anom['score'] > 15.0
+    assert abs(anom['t0'] - 5.0) < 0.5
+    assert anom['duration'] > 0.0

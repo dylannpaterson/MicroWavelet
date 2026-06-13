@@ -17,6 +17,8 @@ from astropy.timeseries import LombScargle
 from scipy import optimize
 from scipy.interpolate import CubicSpline
 from scipy.stats import median_abs_deviation
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
 
 # ---------------------------------------------------------------------------
 # 1. Period search
@@ -61,12 +63,10 @@ def find_shared_period(t, y, dy, min_period=1.0, max_period=10.0):
     p_ls = 1.0 / frequency[np.argmax(power)]
 
     # 3. Robust Harmonic Check (PDM scoring)
-    # We test P/2, P, and 2P to find the fundamental that folds cleanest.
     def get_pdm_score(p):
         if p < min_period or p > max_period:
             return 1e10
         phase = (t_c % p) / p
-        # Simple binned MAD score: lower is better
         bins = np.linspace(0.0, 1.0, 20)
         scatters = []
         for i in range(len(bins) - 1):
@@ -123,8 +123,6 @@ class WhittakerSmoother:
         self.sum_log_var = sum_log_var
         self.kernel_ = DummyKernel()
 
-        # Set up periodic cubic spline for evaluation
-        # We append a wrapped first element at the end of the period
         x_cs = np.concatenate([bin_centers, [bin_centers[0] + 1.0]])
         y_cs = np.concatenate([bin_values, [bin_values[0]]])
         self.cs = CubicSpline(x_cs, y_cs, bc_type="periodic")
@@ -136,7 +134,6 @@ class WhittakerSmoother:
         else:
             phase = X_arr
 
-        # Map phase to [bin_centers[0], bin_centers[0] + 1.0)
         phase_mapped = (phase - self.bin_centers[0]) % 1.0 + self.bin_centers[0]
         y_pred = self.cs(phase_mapped)
 
@@ -145,8 +142,6 @@ class WhittakerSmoother:
         return y_pred
 
     def log_marginal_likelihood(self, *args, **kwargs):
-        # Return the binned Gaussian log-likelihood as a robust proxy for period folding quality.
-        # This prevents complexity-penalty bias when comparing different periods.
         if self.N_valid < 4:
             return -1e20
         log_like = -0.5 * (self.rss + self.sum_log_var)
@@ -164,18 +159,14 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
     Returns
     -------
     gp : WhittakerSmoother
-        An object wrapping the fitted Whittaker smoother and mimicking the
-        GaussianProcessRegressor interface.
-    phase : np.ndarray  (same length as t)
+    phase : np.ndarray
     valid_mask : np.ndarray[bool]
-        True where the data was kept (not clipped as a transient).
     """
     t = np.asarray(t)
     y = np.asarray(y)
     y_err = np.asarray(y_err)
     phase = (t % period) / period
-    # Initialize valid_mask using robust positive 3-sigma MAD clipping on the quiescent baseline
-    # to protect the baseline from massive transients right away.
+    
     y_low = y[y <= np.median(y)]
     if len(y_low) > 5:
         base_level = np.median(y_low)
@@ -189,12 +180,9 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
     valid_mask = y < base_level + 3.0 * sigma
     gp = None
 
-    # Dynamically set n_bins based on the number of active points
-    # to ensure robust bin occupancy and prevent empty-bin GCV issues.
     if n_bins is None:
         n_bins = int(np.clip(np.sum(valid_mask) // 8, 40, 120))
 
-    # Construct the periodic second-difference Laplacian matrix D of size n_bins x n_bins
     D = np.zeros((n_bins, n_bins))
     for i in range(n_bins):
         D[i, (i - 1) % n_bins] = 1.0
@@ -218,8 +206,6 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
                 bin_values[k] = median_val
                 std_val = np.std(y[in_bin])
                 se_val = 1.2533 * std_val / np.sqrt(n_pts) if n_pts > 1 else y_err[in_bin][0]
-
-                # Stabilized bin error estimation using data point uncertainties
                 min_err = np.mean(y_err[in_bin]) / np.sqrt(n_pts)
                 bin_errors[k] = max(se_val, min_err, 1e-4)
                 W_diag[k] = 1.0 / bin_errors[k] ** 2
@@ -235,13 +221,7 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
             bin_errors = np.ones(n_bins) * 0.05
             N_valid = n_bins
 
-        # Optimize lambda using GCV
-        def gcv_score(
-            log_lam,
-            W_diag=W_diag,
-            bin_values=bin_values,
-            N_valid=N_valid,
-        ):
+        def gcv_score(log_lam, W_diag=W_diag, bin_values=bin_values, N_valid=N_valid):
             lam = 10**log_lam
             A = np.diag(W_diag) + lam * D_TD
             try:
@@ -256,13 +236,11 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
             except np.linalg.LinAlgError:
                 return 1e10
 
-        # Grid search (lower bound of 0.0 / lambda=1.0 protects empty bins from ill-conditioned ringing)
         log_lams = np.linspace(0.0, 6.0, 30)
         scores = [gcv_score(log_lam) for log_lam in log_lams]
         best_idx = np.argmin(scores)
         best_log_lam = log_lams[best_idx]
 
-        # Refinement
         lam = 10**best_log_lam
         try:
             bounds = (max(0.0, best_log_lam - 1.0), min(6.0, best_log_lam + 1.0))
@@ -274,7 +252,6 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
         except (ValueError, RuntimeError, np.linalg.LinAlgError):
             pass
 
-        # Perform the final solve with optimized lambda
         A = np.diag(W_diag) + lam * D_TD
         try:
             y_hat = np.linalg.solve(A, W_diag * bin_values)
@@ -309,7 +286,6 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
         sigma = 1.4826 * mad if mad > 0 else np.std(residuals[valid_mask])
         sigma = max(sigma, 1e-6)
 
-        # Asymmetric clipping: only remove positive outliers (protect microlensing peaks)
         outliers = residuals > sigma_clip * sigma
         if np.sum(outliers & valid_mask) == 0:
             break
@@ -319,7 +295,85 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
 
 
 # ---------------------------------------------------------------------------
-# 3. Alias resolution
+# 3. Non-periodic GP detrending
+# ---------------------------------------------------------------------------
+
+
+def gp_detrend(t, y, y_err, threshold=3.0):
+    """
+    Robust Masked Gaussian Process detrending for non-periodic light curves.
+    
+    This method prevents transient microlensing signals from being absorbed 
+    into the baseline by iteratively masking outliers before the final GP fit.
+
+    Returns
+    -------
+    y_detrended : np.ndarray
+        The whitened residuals (y / baseline).
+    y_err_scaled : np.ndarray
+        The scaled uncertainties.
+    baseline_model : np.ndarray
+        The fitted GP baseline.
+    """
+    t = np.asarray(t)
+    y = np.asarray(y)
+    y_err = np.asarray(y_err)
+    t_reshaped = t.reshape(-1, 1)
+    
+    # Step 1: Initial Fit (Use a very smooth kernel to avoid absorbing transients)
+    # We use a large length scale and fix it to ensure the first pass is a 'broad' baseline.
+    kernel_smooth = C(1.0, (1e-3, 1e3)) * RBF(length_scale=100.0, length_scale_bounds=(100.0, 100.0)) + WhiteKernel(noise_level=0.1, noise_level_bounds=(0.1, 0.1))
+    gp_initial = GaussianProcessRegressor(kernel=kernel_smooth, alpha=y_err**2, n_restarts_optimizer=1)
+    gp_initial.fit(t_reshaped, y)
+    y_pred_initial = gp_initial.predict(t_reshaped)
+    
+    # Step 2: Identify Outliers (Standardized Residuals)
+    residuals = (y - y_pred_initial) / y_err
+    mask = np.abs(residuals) < threshold
+    
+    # Step 3: Re-fit using only masked points (Use the original kernel structure)
+    kernel_robust = C(1.0) * RBF(length_scale=20.0) + WhiteKernel(noise_level=0.01)
+    if np.any(mask):
+        t_masked = t[mask].reshape(-1, 1)
+        y_masked = y[mask]
+        y_err_masked = y_err[mask]
+        
+        gp_robust = GaussianProcessRegressor(kernel=kernel_robust, alpha=y_err_masked**2, n_restarts_optimizer=5)
+        gp_robust.fit(t_masked, y_masked)
+        y_baseline = gp_robust.predict(t_reshaped)
+    else:
+        y_baseline = y_pred_initial
+        
+    y_detrended = y / y_baseline
+    y_err_scaled = y_err * (y_detrended / np.where(y > 0, y, 1.0))
+    
+    return y_detrended, y_err_scaled, y_baseline
+
+def detrend_light_curve_gp(band_data, threshold=3.0):
+    """
+    Full non-periodic Gaussian Process detrending pipeline for multi-filter observations.
+    """
+    detrended_bands = {}
+    for b, data in band_data.items():
+        t = np.asarray(data["t"])
+        y = np.asarray(data["y"])
+        y_err = np.asarray(data["y_err"])
+
+        y_detrended, y_err_scaled, baseline_model = gp_detrend(t, y, y_err, threshold=threshold)
+
+        detrended_bands[b] = {
+            "t": t,
+            "y_raw": y,
+            "y_detrended": y_detrended,
+            "y_err": y_err_scaled,
+            "baseline_model": baseline_model,
+        }
+
+    return detrended_bands
+
+
+# ---------------------------------------------------------------------------
+# 4. Alias resolution
 # ---------------------------------------------------------------------------
 
 
@@ -327,10 +381,6 @@ def resolve_fundamental_period(t, y, y_err, period, mask, min_period=1.0, max_pe
     """
     Finds the fundamental period by iteratively doubling and halving
     candidates using Bayesian Log-Marginal Likelihood (LML).
-
-    1. Doubling: Try to find the full orbital cycle where complex shapes
-       (e.g., ellipsoidal + eclipses) are fully resolved.
-    2. Halving: Apply Aggressive Occam's Razor to find the simplest fundamental.
     """
     t_f, y_f, ye_f = np.asarray(t)[mask], np.asarray(y)[mask], np.asarray(y_err)[mask]
 
@@ -338,7 +388,6 @@ def resolve_fundamental_period(t, y, y_err, period, mask, min_period=1.0, max_pe
         if p < min_period or p > max_period:
             return -1e20
         try:
-            # We use max_iter=2 for a reasonably converged fit
             gp, phase, m = fit_periodic_gp_robust(t_f, y_f, ye_f, p, max_iter=2)
             return gp.log_marginal_likelihood(gp.kernel_.theta)
         except (ValueError, RuntimeError, np.linalg.LinAlgError):
@@ -347,8 +396,6 @@ def resolve_fundamental_period(t, y, y_err, period, mask, min_period=1.0, max_pe
     current_p = period
     current_lml = get_gp_evidence(current_p)
 
-    # 1. Iterative Doubling
-    # We double as long as it's significantly better (Delta LML > 5).
     for _ in range(3):
         double_p = 2.0 * current_p
         if double_p > max_period:
@@ -360,8 +407,6 @@ def resolve_fundamental_period(t, y, y_err, period, mask, min_period=1.0, max_pe
         else:
             break
 
-    # 2. Iterative Halving (Aggressive Occam's Razor)
-    # We prefer the shorter period unless it's much worse (Delta LML < -2.0).
     for _ in range(3):
         half_p = 0.5 * current_p
         if half_p < min_period:
@@ -374,11 +419,6 @@ def resolve_fundamental_period(t, y, y_err, period, mask, min_period=1.0, max_pe
             break
 
     return current_p
-
-
-# ---------------------------------------------------------------------------
-# 4. Period fine-tuning
-# ---------------------------------------------------------------------------
 
 
 def fine_tune_period(t, y, y_err, initial_period, mask, baseline_func=None):
@@ -418,20 +458,13 @@ def fine_tune_period(t, y, y_err, initial_period, mask, baseline_func=None):
     return initial_period
 
 
-# ---------------------------------------------------------------------------
-# 5. Orchestrator
-# ---------------------------------------------------------------------------
-
-
 def detrend_light_curve_periodic(band_data, min_period=1.0, max_period=10.0, baseline_func=None):
     """
     Full periodic baseline detrending pipeline for multi-filter observations.
     """
-    # Primary band = most data points
     primary_band = max(band_data, key=lambda b: len(band_data[b]["t"]))
     p = band_data[primary_band]
 
-    # 1. Lomb-Scargle period search
     ls_period, _, _, search_mask = find_shared_period(
         p["t"],
         p["y"],
@@ -440,18 +473,12 @@ def detrend_light_curve_periodic(band_data, min_period=1.0, max_period=10.0, bas
         max_period=max_period,
     )
 
-    # 2. Rough mask
     _, _, rough_mask = fit_periodic_gp_robust(p["t"], p["y"], p["y_err"], ls_period, max_iter=3)
-
-    # 3. Alias resolution
     resolved_period = resolve_fundamental_period(p["t"], p["y"], p["y_err"], ls_period, rough_mask)
-
-    # 4. Fine-tune
     optimized_period = fine_tune_period(
         p["t"], p["y"], p["y_err"], resolved_period, rough_mask, baseline_func
     )
 
-    # 5. Per-band GPR detrending
     detrended_bands = {}
     for b, data in band_data.items():
         t = np.asarray(data["t"])

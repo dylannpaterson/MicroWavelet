@@ -64,7 +64,7 @@ The primary band signal is projected onto secondary filters using a local weight
 ### 6. Periodic Baseline Detrending
 
 For observations of variable stars (e.g., RR Lyrae, eclipsing binaries), the library provides a highly optimized, multi-stage Whittaker-Eilers (Smoothing Spline) detrending pipeline:
-1.  **Robust Period Search**: Performs an initial Lomb-Scargle search on a "cleaned" version of the light curve where large positive transients (like microlensing events) are masked using a 2.5-sigma MAD threshold.
+1.  **Robust Period Search**: Performs an initial Lomb-Scargle search on a \"cleaned\" version of the light curve where large positive transients (like microlensing events) are masked using a 2.5-sigma MAD threshold.
 2.  **Bayesian Period Selection**: Implements an iterative halving strategy to find the fundamental period. Candidates ($P/2, P, 2P$) are evaluated using a binned **Gaussian Log-Likelihood** proxy:
 
     $$\ln L = -0.5 \left( RSS + \sum_{k \in \text{valid}} \ln(2\pi \sigma_k^2) \right)$$
@@ -73,7 +73,19 @@ For observations of variable stars (e.g., RR Lyrae, eclipsing binaries), the lib
 4.  **Iterative Whittaker Optimization**: The period is fine-tuned using a non-linear scalar optimizer that fits a robust Whittaker-Eilers smoother with circular boundary conditions and Generalized Cross-Validation (GCV) optimal smoothing parameter $\lambda$ selection at each iteration.
 5.  **Normalization**: The raw flux is divided by the converged periodic Whittaker baseline model to isolate the stationary transient signal for CWT analysis.
 
-### 7. Cumulative Sum (CUSUM) Anomaly Detection
+### 7. Robust Non-Periodic GP Detrending
+
+For non-periodic light curves, the library provides a robust Gaussian Process (GP) detrending method that prevents transient signals from being absorbed into the baseline.
+
+![Robust GP Detrending Comparison](docs/gp_comparison.png)
+
+*   **Top Panel**: Comparison of the Naive GP baseline (red) vs. the Robust GP baseline (green). The naive baseline attempts to smooth through the anomaly, while the robust baseline stays true to the quiescent signal.
+*   **Middle Panel**: Naive residuals, where the signal is significantly dampened.
+*   **Bottom Panel**: Robust residuals, where the transient signal is preserved with high significance.
+
+---
+
+### 8. Cumulative Sum (CUSUM) Anomaly Detection
 
 To detect abrupt shifts or persistent deviations from a flat baseline (e.g., weak or fast microlensing signals, sharp magnification peaks), the library provides cumulative sum (CUSUM) detection routines:
 *   **Linear CUSUM (`run_linear_cusum`)**: Accumulates positive residual deviations, particularly useful for detecting magnification peaks.
@@ -83,10 +95,10 @@ To detect abrupt shifts or persistent deviations from a flat baseline (e.g., wea
 
 ---
 
-
 ## Installation
 
 ### From PyPI (Standard)
+
 You can install the stable release of `microwavelet` directly from PyPI:
 ```bash
 pip install microwavelet
@@ -172,7 +184,6 @@ if anomaly_details["triggered"]:
 
 ## Pipeline Diagnostics
 
-### Detection & Parametric Fit
 The following plot illustrates the CWT detection process and subsequent parametric fit on a synthetic dataset:
 
 ![MicroWavelet Pipeline Diagnostics](docs/cwt_demo.png)
@@ -212,6 +223,8 @@ python -m ruff format .
 - astropy
 - scikit-learn
 
+---
+
 ## Contributing
 
 Contributions should be made from a fork via pull request. Before opening a pull request, install the development extras and run the test and lint checks:
@@ -223,9 +236,13 @@ python -m ruff check --fix .
 python -m ruff format .
 ```
 
+---
+
 ## Attributing
 
 If you use MicroWavelet in published work, cite the archived release DOI listed above or use the repository citation metadata in `CITATION.cff`.
+
+---
 
 ## Maintainer Release Notes
 

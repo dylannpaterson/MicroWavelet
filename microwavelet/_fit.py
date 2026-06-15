@@ -41,7 +41,7 @@ def _objective(params, t, y, y_err):
     chi2, fs, fb = pspl_linear_fit(t, y, y_err, t0, u0, tE)
     return chi2
 
-def detect_anomalies_with_fit(t, y, y_err, threshold=25.0, k=2.0, threshold_slow=35.0, k_slow=0.5):
+def detect_anomalies_with_fit(t, y, y_err, threshold=25.0, k=2.0, threshold_slow=35.0, k_slow=0.5, bidirectional=False):
     """
     Unified microlensing pipeline: performs CUSUM-seeded multi-start PSPL fitting,
     calculates residuals, and runs the CUSUM change-point anomaly detector on them.
@@ -90,7 +90,21 @@ def detect_anomalies_with_fit(t, y, y_err, threshold=25.0, k=2.0, threshold_slow
         }
     """
     # 1. Seed parameters using CUSUM on the robust median baseline flat-fit
-    seeds = seed_by_flat_cusum(t, y, y_err, method='linear', k=1.0, threshold=10.0, return_all=True)
+    # Combine both fast (k=2.0) and slow (k=0.5) linear CUSUM configurations to find seed candidates
+    seeds_fast = seed_by_flat_cusum(t, y, y_err, method='linear', k=2.0, threshold=10.0, return_all=True)
+    seeds_slow = seed_by_flat_cusum(t, y, y_err, method='linear', k=0.5, threshold=10.0, return_all=True)
+    
+    # Merge seeds and remove duplicates within 5 days
+    all_seeds = []
+    for t0_s, tE_s in seeds_fast + seeds_slow:
+        if not any(abs(t0_s - existing_t0) < 5.0 for existing_t0, _ in all_seeds):
+            all_seeds.append((t0_s, tE_s))
+            
+    if len(all_seeds) == 0:
+        peak_idx = np.argmax(y)
+        all_seeds = [(float(t[peak_idx]), 20.0)]
+        
+    seeds = all_seeds
     
     best_overall_chi2 = np.inf
     best_overall_fit = None
@@ -142,8 +156,8 @@ def detect_anomalies_with_fit(t, y, y_err, threshold=25.0, k=2.0, threshold_slow
     residuals_sigma = (y - y_model_pts) / y_err
     
     # 3. Detect anomalies in residuals (both fast/narrow and slow/gentle configurations)
-    anom_fast = find_anomalies_cusum(t, residuals_sigma, threshold=threshold, k=k)
-    anom_slow = find_anomalies_cusum(t, residuals_sigma, threshold=threshold_slow, k=k_slow)
+    anom_fast = find_anomalies_cusum(t, residuals_sigma, threshold=threshold, k=k, bidirectional=bidirectional)
+    anom_slow = find_anomalies_cusum(t, residuals_sigma, threshold=threshold_slow, k=k_slow, bidirectional=bidirectional)
     
     # 4. Format outputs
     N = len(t)

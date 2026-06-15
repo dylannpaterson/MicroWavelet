@@ -147,7 +147,32 @@ def seed_by_flat_cusum(t, y, y_err, method="linear", k=1.0, threshold=10.0, retu
             return float(t[peak_idx]), 20.0, False
 
 
-def find_anomalies_cusum(t, residuals_sigma, threshold=25.0, k=2.0):
+def run_backward_quadratic_cusum(r, k=2.0):
+    """
+    Run quadratic cumulative sum (CUSUM) backward in time.
+    Accumulates variance excess above the expected baseline noise level.
+
+    Parameters
+    ----------
+    r : np.ndarray
+        Standardized residuals (e.g., (y - y_model) / y_err)
+    k : float, default 2.0
+        Slack parameter (drain) to suppress baseline fluctuations.
+
+    Returns
+    -------
+    S : np.ndarray
+        Accumulated backward CUSUM statistic over time.
+    """
+    S = np.zeros(len(r))
+    for i in range(len(r) - 2, -1, -1):
+        val = S[i + 1] + r[i] ** 2 - 1.0 - k
+        if val > 0.0:
+            S[i] = val
+    return S
+
+
+def find_anomalies_cusum(t, residuals_sigma, threshold=25.0, k=2.0, bidirectional=True):
     """
     Detect anomalies in residuals using quadratic CUSUM and extract their properties.
 
@@ -161,6 +186,8 @@ def find_anomalies_cusum(t, residuals_sigma, threshold=25.0, k=2.0):
         Significance threshold (H) for CUSUM.
     k : float, default 2.0
         CUSUM slack parameter.
+    bidirectional : bool, default True
+        If True, run bidirectional CUSUM (minimum of forward and backward passes).
 
     Returns
     -------
@@ -177,7 +204,13 @@ def find_anomalies_cusum(t, residuals_sigma, threshold=25.0, k=2.0):
             'cusum_statistic': np.ndarray
         }
     """
-    S = run_quadratic_cusum(residuals_sigma, k=k)
+    if bidirectional:
+        S_f = run_quadratic_cusum(residuals_sigma, k=k)
+        S_b = run_backward_quadratic_cusum(residuals_sigma, k=k)
+        S = np.minimum(S_f, S_b)
+    else:
+        S = run_quadratic_cusum(residuals_sigma, k=k)
+        
     max_score = float(np.max(S))
     max_idx = np.argmax(S)
 
@@ -198,17 +231,25 @@ def find_anomalies_cusum(t, residuals_sigma, threshold=25.0, k=2.0):
     while onset_idx > 0 and S[onset_idx] > 0.0:
         onset_idx -= 1
 
+    # Trace forward to find the end (for bidirectional)
+    if bidirectional:
+        end_idx = max_idx
+        while end_idx < len(S) - 1 and S[end_idx] > 0.0:
+            end_idx += 1
+    else:
+        end_idx = max_idx
+
     t_onset = float(t[onset_idx])
-    t_end = float(t[max_idx])
+    t_end = float(t[end_idx])
     duration = t_end - t_onset
 
     # Peak is the maximum absolute residual inside the window
-    window_res = np.abs(residuals_sigma[onset_idx : max_idx + 1])
+    window_res = np.abs(residuals_sigma[onset_idx : end_idx + 1])
     peak_offset = np.argmax(window_res)
     t0_anomaly = float(t[onset_idx + peak_offset])
 
     # Standard deviation of the residuals inside the physical window
-    residuals_std = float(np.std(residuals_sigma[onset_idx : max_idx + 1]))
+    residuals_std = float(np.std(residuals_sigma[onset_idx : end_idx + 1]))
 
     return {
         "triggered": True,

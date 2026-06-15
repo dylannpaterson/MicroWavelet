@@ -83,4 +83,4 @@ __all__ = [
     "detect_anomalies_with_fit",
     "get_paczynski",
 ]
-__version__ = "26.1.4"
+__version__ = "26.1.5"

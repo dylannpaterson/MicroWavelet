@@ -1,8 +1,23 @@
+import os
+import sys
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
-from scipy.optimize import minimize
+
+# Suppress convergence warnings for cleaner output
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", message="The optimal value found for dimension 0")
+
+# Ensure microwavelet is in PYTHONPATH
+sys.path.insert(0, os.path.abspath(".."))
+try:
+    from microwavelet import analyze_lightcurve
+except ImportError:
+    # Fallback for running from within the scripts directory
+    sys.path.insert(0, os.path.abspath("."))
+    from microwavelet import analyze_lightcurve
 
 def simulate_microlensing_data(n_points=200):
     """Simulates a light curve with red noise, a Paczynski peak, and Gaussian noise."""
@@ -32,8 +47,8 @@ def simulate_microlensing_data(n_points=200):
 def standard_gp_detrend(t, y, y_err):
     """Standard GP detrending (prone to signal absorption)."""
     t_reshaped = t.reshape(-1, 1)
-    kernel = C(1.0) * RBF(length_scale=20.0) + WhiteKernel(noise_level=0.01)
-    gp = GaussianProcessRegressor(kernel=kernel, alpha=y_err**2)
+    kernel = C(1.0) * RBF(length_scale=20.0, length_scale_bounds=(1.0, 100.0)) + WhiteKernel(noise_level=0.01)
+    gp = GaussianProcessRegressor(kernel=kernel, alpha=0)
     gp.fit(t_reshaped, y)
     return gp.predict(t_reshaped)
 
@@ -41,9 +56,9 @@ def robust_masked_gp_detrend(t, y, y_err, threshold=3.0):
     """Robust Masked GP detrending (prevents signal absorption)."""
     t_reshaped = t.reshape(-1, 1)
     
-    # Step 1: Initial Fit
-    kernel = C(1.0) * RBF(length_scale=20.0) + WhiteKernel(noise_level=0.01)
-    gp = GaussianProcessRegressor(kernel=kernel, alpha=y_err**2)
+    # Step 1: Initial Fit with bounds to prevent collapse
+    kernel = C(1.0) * RBF(length_scale=20.0, length_scale_bounds=(1.0, 100.0)) + WhiteKernel(noise_level=0.01)
+    gp = GaussianProcessRegressor(kernel=kernel, alpha=0)
     gp.fit(t_reshaped, y)
     y_pred_initial = gp.predict(t_reshaped)
     
@@ -57,7 +72,7 @@ def robust_masked_gp_detrend(t, y, y_err, threshold=3.0):
         y_masked = y[mask]
         y_err_masked = y_err[mask]
         
-        gp_robust = GaussianProcessRegressor(kernel=kernel, alpha=y_err_masked**2)
+        gp_robust = GaussianProcessRegressor(kernel=kernel, alpha=0)
         gp_robust.fit(t_masked, y_masked)
         y_baseline = gp_robust.predict(t_reshaped)
     else:
@@ -65,11 +80,19 @@ def robust_masked_gp_detrend(t, y, y_err, threshold=3.0):
         
     return y_baseline
 
-if __name__ == "__main__":
-    # --- Execution ---
+def generate_plot():
+    # Set up styling for publication-quality visual excellence
+    plt.rcParams["font.family"] = "sans-serif"
+    plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "Arial", "Inter"]
+    plt.rcParams["text.color"] = "#1a1a1a"
+    plt.rcParams["axes.labelcolor"] = "#1a1a1a"
+    plt.rcParams["xtick.color"] = "#4a4a4a"
+    plt.rcParams["ytick.color"] = "#4a4a4a"
+
+    # 1. Generate synthetic data
     t, y, y_err, true_baseline, true_signal = simulate_microlensing_data()
 
-    # Run both methods
+    # 2. Run both methods
     y_std_gp = standard_gp_detrend(t, y, y_err)
     y_robust_gp = robust_masked_gp_detrend(t, y, y_err)
 
@@ -77,32 +100,50 @@ if __name__ == "__main__":
     res_std = (y - y_std_gp) / y_err
     res_robust = (y - y_robust_gp) / y_err
 
-    # Plotting results
-    plt.figure(figsize=(12, 12))
+    # 3. Plotting
+    fig, axes = plt.subplots(3, 1, figsize=(12, 15), dpi=200, sharex=True)
+    fig.patch.set_facecolor("#ffffff")
 
-    # Plot 1: Original Data and Baselines
-    plt.subplot(3, 1, 1)
-    plt.errorbar(t, y, yerr=y_err, fmt='.', color='gray', alpha=0.5, label='Data')
-    plt.plot(t, true_baseline, 'k--', label='True Baseline', alpha=0.8)
-    plt.plot(t, y_std_gp, 'r-', label='Naive GP Baseline')
-    plt.plot(t, y_robust_gp, 'g-', label='Robust GP Baseline')
-    plt.title("Baseline Recovery Comparison")
-    plt.legend()
+    for ax in axes:
+        ax.set_facecolor("#f8f9fa")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_color("#cccccc")
+        ax.spines["bottom"].set_color("#cccccc")
+        ax.grid(True, linestyle=":", alpha=0.5)
 
-    # Plot 2: Naive Residuals
-    plt.subplot(3, 1, 2)
-    plt.plot(t, res_std, 'r-', alpha=0.6, label='Naive Residuals')
-    plt.axhline(0, color='black', linestyle='--')
-    plt.title("Naive Residuals (Suppressed)")
-    plt.legend()
+    # Panel 1: Original Data and Baselines
+    axes[0].errorbar(t, y, yerr=y_err, fmt='.', color='gray', alpha=0.4, label='Observed Data', zorder=1)
+    axes[0].plot(t, true_baseline, 'k--', label='True Baseline', alpha=0.7, zorder=2)
+    axes[0].plot(t, y_std_gp, 'r-', label='Naive GP Baseline', linewidth=2, zorder=3)
+    axes[0].plot(t, y_robust_gp, 'g-', label='Robust GP Baseline', linewidth=2, zorder=4)
+    axes[0].set_ylabel("Relative Flux", fontweight="bold", fontsize=12)
+    axes[0].set_title("Baseline Recovery Comparison", fontsize=14, fontweight="bold", loc="left")
+    axes[0].legend(loc="upper right", frameon=True, facecolor="#ffffff", fontsize=10)
 
-    # Plot 3: Robust Residuals
-    plt.subplot(3, 1, 3)
-    plt.plot(t, res_robust, 'g-', alpha=0.8, label='Robust Residuals')
-    plt.axhline(0, color='black', linestyle='--')
-    plt.title("Robust Residuals (Preserved)")
-    plt.legend()
+    # Panel 2: Naive Residuals
+    axes[1].plot(t, res_std, 'r-', alpha=0.6, label='Naive Residuals', linewidth=1.5)
+    axes[1].axhline(0, color='black', linestyle='--', alpha=0.5)
+    axes[1].set_ylabel(r"Standardized Residuals ($\sigma$)", fontweight="bold", fontsize=12)
+    axes[1].set_title("Naive Residuals (Signal is 'Flattened')", fontsize=14, fontweight="bold", loc="left")
+    axes[1].legend(loc="upper right", frameon=True, facecolor="#ffffff", fontsize=10)
+
+    # Panel 3: Robust Residuals
+    axes[2].plot(t, res_robust, 'g-', alpha=0.8, label='Robust Residuals', linewidth=1.5)
+    axes[2].axhline(0, color='black', linestyle='--', alpha=0.5)
+    axes[2].axhline(3.0, color='red', linestyle=':', alpha=0.5, label=r'3$\sigma$ Threshold')
+    axes[2].axhline(-3.0, color='red', linestyle=':', alpha=0.5)
+    axes[2].set_ylabel(r"Standardized Residuals ($\sigma$)", fontweight="bold", fontsize=12)
+    axes[2].set_xlabel("Time (Days)", fontweight="bold", fontsize=12)
+    axes[2].set_title("Robust Residuals (Signal is 'Preserved')", fontsize=14, fontweight="bold", loc="left")
+    axes[2].legend(loc="upper right", frameon=True, facecolor="#ffffff", fontsize=10)
 
     plt.tight_layout()
-    plt.savefig("microwavelet/docs/gp_comparison.png")
-    print("Comparison plot saved to 'microwavelet/docs/gp_comparison.png'")
+
+    out_path = "microwavelet/docs/gp_comparison.png"
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    plt.savefig(out_path, bbox_inches="tight", facecolor="#ffffff")
+    print(f"✅ Comparison plot saved to {out_path}")
+
+if __name__ == "__main__":
+    generate_plot()

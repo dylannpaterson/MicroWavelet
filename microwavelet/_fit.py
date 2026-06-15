@@ -41,7 +41,7 @@ def _objective(params, t, y, y_err):
     chi2, fs, fb = pspl_linear_fit(t, y, y_err, t0, u0, tE)
     return chi2
 
-def detect_anomalies_with_fit(t, y, y_err, threshold=12.5, k=2.0, threshold_slow=17.5, k_slow=0.5, bidirectional=True):
+def detect_anomalies_with_fit(t, y, y_err, threshold=25.0, k=2.0, threshold_slow=25.0, k_slow=0.5, bidirectional=True):
     """
     Unified microlensing pipeline: performs CUSUM-seeded multi-start PSPL fitting,
     calculates residuals, and runs the CUSUM change-point anomaly detector on them.

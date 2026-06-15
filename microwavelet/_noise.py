@@ -1,18 +1,23 @@
 import numpy as np
 from astropy.timeseries import LombScargle
-from scipy.optimize import curve_fit
-from scipy.interpolate import interp1d
 from scipy.signal import fftconvolve
 from scipy.ndimage import uniform_filter1d
+from scipy.optimize import curve_fit, least_squares
 
-def _psd_model(f, A, beta, C):
-    """Power law model with a white noise floor."""
-    return A * (f**(-beta)) + C
+def _psd_model_log(x, logA, beta, logC):
+    """Log-space version of the power law model for stable fitting.
+    x is log10(f).
+    Uses the LogSumExp trick to avoid overflow.
+    """
+    a = logA - beta * x
+    b = logC
+    m = np.maximum(a, b)
+    return m + np.log10(np.power(10, a - m) + np.power(10, b - m))
 
 def estimate_spectral_index(t, y, min_freq=None, max_freq=None):
     """
     Estimates the spectral index beta from the Lomb-Scargle periodogram.
-    Models P(f) = A * f^-beta + C.
+    Models P(f) = A * f^-beta + C using a stable log-space fit.
 
     Parameters
     ----------
@@ -58,19 +63,47 @@ def estimate_spectral_index(t, y, min_freq=None, max_freq=None):
     if len(f_fit) < 4:
         return {"error": "Not enough frequency points for fitting."}
 
-    # Initial guesses: A=max, beta=1, C=min
-    p0 = [np.max(p_fit), 1.0, np.min(p_fit)]
+    # Log-space fitting to handle the massive dynamic range of power laws.
+    # We fit log10(P) = log10(A * f^-beta + C)
+    # This is much more stable than fitting in linear space.
     
+    # Initial guesses in log-space
+    logA_guess = np.log10(np.max(p_fit))
+    beta_guess = 1.0
+    logC_guess = np.log10(np.min(p_fit) + 1e-20)
+    
+    p0 = [logA_guess, beta_guess, logC_guess]
+    
+    # Prepare data for log-space fit
+    x_data = np.log10(f_fit)
+    y_data = np.log10(np.clip(p_fit, 1e-20, None))
+
     try:
-        popt, pcov = curve_fit(_psd_model, f_fit, p_fit, p0=p0)
-        A, beta, C = popt
-        perr = np.sqrt(np.diag(pcov))
-        beta_err = perr[1]
+        # Use least_squares with a robust loss function to handle the high-frequency noise
+        def residuals(params, x, y):
+            return _psd_model_log(x, *params) - y
+
+        res_ls = least_squares(residuals, p0, args=(x_data, y_data), loss='soft_l1')
+        popt = res_ls.x
         
-        # R-squared
-        residuals = p_fit - _psd_model(f_fit, *popt)
-        ss_res = np.sum(residuals**2)
-        ss_tot = np.sum((p_fit - np.mean(p_fit))**2)
+        logA, beta, logC = popt
+        A = 10**logA
+        C = 10**logC
+        
+        # Calculate errors using the covariance matrix from curve_fit (as a proxy)
+        # or just use the scale of the residuals.
+        # For simplicity, we'll use curve_fit to get the covariance if possible.
+        try:
+            _, pcov = curve_fit(_psd_model_log, x_data, y_data, p0=p0)
+            perr = np.sqrt(np.diag(pcov))
+            beta_err = perr[1]
+        except:
+            beta_err = np.nan
+        
+        # R-squared in log-space
+        y_pred = _psd_model_log(x_data, *popt)
+        ss_res = np.sum((y_data - y_pred)**2)
+        ss_tot = np.sum((y_data - np.mean(y_data))**2)
         r_squared = 1 - (ss_res / ss_tot)
         
         return {
@@ -158,7 +191,7 @@ class WaveletCoherenceAnalyzer:
         # 3. Compute Coherence
         # R^2 = |S(s^-1 * XWT)|^2 / (S(s^-1 * |W1|^2) * S(s^-1 * |W2|^2))
         # We use a moving average for smoothing in both time and scale.
-        
+        #
         # Magnitude squared
         abs_xwt_sq = np.abs(xwt)**2
         abs_cwt1_sq = np.abs(cwt1)**2
@@ -169,7 +202,7 @@ class WaveletCoherenceAnalyzer:
             res = uniform_filter1d(arr, size=5, axis=1)
             res = uniform_filter1d(res, size=3, axis=0)
             return res
-
+        
         S_xwt = smooth_both(abs_xwt_sq)
         S_cwt1 = smooth_both(abs_cwt1_sq)
         S_cwt2 = smooth_both(abs_cwt2_sq)

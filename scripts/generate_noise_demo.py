@@ -7,86 +7,104 @@ import sys
 sys.path.insert(0, os.path.abspath(".."))
 from microwavelet import characterize_multiband_noise
 
-def generate_synthetic_multiband_noise(n_points=500):
+def generate_stationary_noise(n_points, beta, correlation_factor=1.0):
+    """Generates stationary noise with a specific spectral index beta."""
+    n_fft = 2**int(np.ceil(np.log2(n_points)))
+    freqs = np.fft.rfftfreq(n_fft)
+    
+    # Power law spectrum
+    psd = np.zeros_like(freqs)
+    psd[1:] = freqs[1:]**(-beta)
+    psd[0] = psd[1]
+    
+    # Random phases
+    phases = np.exp(1j * np.random.uniform(0, 2*np.pi, len(freqs)))
+    noise_fft = phases * np.sqrt(psd)
+    noise = np.fft.irfft(noise_fft, n=n_fft)[:n_points]
+    
+    # Normalize
+    noise = (noise - np.mean(noise)) / np.std(noise)
+    return noise
+
+def run_comparison():
+    n_points = 2000
     t = np.linspace(0, 100, n_points)
     
-    # Band 1: Red noise (f^-2) + white noise
-    # We can simulate red noise by integrating white noise
-    white_noise = np.random.normal(0, 0.05, n_points)
-    red_noise = np.cumsum(white_noise)
-    red_noise = (red_noise - np.mean(red_noise)) / np.std(red_noise) * 0.1
-    y1 = 1.0 + red_noise + np.random.normal(0, 0.02, n_points)
-    
-    # Band 2: Similar red noise but slightly different
-    y2 = 1.0 + red_noise * 0.8 + np.random.normal(0, 0.02, n_points)
-    
-    # Band 3: Mostly white noise
-    y3 = 1.0 + np.random.normal(0, 0.02, n_points)
-    
-    bands_data = {
-        "W146": {"t": t, "y": y1, "y_err": np.ones(n_points) * 0.02},
-        "W184": {"t": t, "y": y2, "y_err": np.ones(n_points) * 0.02},
-        "F087": {"t": t, "y": y3, "y_err": np.ones(n_points) * 0.02}
+    # --- CASE 1: PURE RED NOISE (Beta=2, Highly Correlated) ---
+    # We create two bands that are identical (perfect correlation)
+    red_noise = generate_stationary_noise(n_points, 2.0)
+    bands_red = {
+        'Band A': {'t': t, 'y': red_noise},
+        'Band B': {'t': t, 'y': red_noise}
     }
-    return bands_data, t
-
-def main():
-    bands_data, t = generate_synthetic_multiband_noise()
     
-    # Run analysis
-    widths = np.geomspace(1.0, 20.0, 20)
-    results = characterize_multiband_noise(bands_data, widths=widths)
+    # --- CASE 2: PURE WHITE NOISE (Beta=0, Uncorrelated) ---
+    white_noise_a = generate_stationary_noise(n_points, 0.0)
+    white_noise_b = generate_stationary_noise(n_points, 0.0)
+    bands_white = {
+        'Band A': {'t': t, 'y': white_noise_a},
+        'Band B': {'t': t, 'y': white_noise_b}
+    }
     
-    # 3. Plotting
-    plt.rcParams["font.family"] = "sans-serif"
-    plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "Arial", "Inter"]
-    plt.rcParams["text.color"] = "#1a1a1a"
-    plt.rcParams["axes.labelcolor"] = "#1a1a1a"
-    plt.rcParams["xtick.color"] = "#4a4a4a"
-    plt.rcParams["ytick.color"] = "#4a4a4a"
+    # --- CASE 3: MIXED NOISE (Beta=1, Partially Correlated) ---
+    # Shared red component + independent white components
+    shared_red = generate_stationary_noise(n_points, 1.0) * 0.8
+    white_a = generate_stationary_noise(n_points, 0.0) * 0.2
+    white_b = generate_stationary_noise(n_points, 0.0) * 0.2
+    bands_mixed = {
+        'Band A': {'t': t, 'y': shared_red + white_a},
+        'Band B': {'t': t, 'y': shared_red + white_b}
+    }
 
-    fig, axes = plt.subplots(2, 1, figsize=(10, 10), dpi=200)
-    fig.patch.set_facecolor("#ffffff")
+    cases = [
+        ("Pure Red (Beta=2.0, Correlated)", bands_red),
+        ("Pure White (Beta=0.0, Uncorrelated)", bands_white),
+        ("Mixed (Beta=1.0, Partially Correlated)", bands_mixed)
+    ]
 
-    # Flat UI Palette from _core.py
-    palette = ["#3498db", "#e74c3c", "#2ecc71", "#f1c40f", "#9b59b6", "#1abc9c", "#e67e22"]
+    fig, axes = plt.subplots(3, 2, figsize=(14, 15), constrained_layout=True)
 
-    for ax in axes:
-        ax.set_facecolor("#f8f9fa")
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.spines["left"].set_color("#cccccc")
-        ax.spines["bottom"].set_color("#cccccc")
-        ax.grid(True, linestyle=":", alpha=0.5)
+    for idx, (title, bands) in enumerate(cases):
+        # Run analysis
+        results = characterize_multiband_noise(bands)
+        
+        # 1. Plot Spectral Indices (Left Column)
+        ax_spec = axes[idx, 0]
+        names = list(bands.keys())
+        betas = [results['individual_metrics'][n]['beta'] for n in names]
+        colors = ['#4477AA', '#EE6677'] # Paul Tol-ish
+        
+        bars = ax_spec.bar(names, betas, color=colors, alpha=0.8)
+        ax_spec.axhline(2.0, color='black', linestyle='--', alpha=0.5, label='$\\beta=2$ (Red)')
+        ax_spec.axhline(0.0, color='black', linestyle=':', alpha=0.5, label='$\\beta=0$ (White)')
+        ax_spec.set_ylim(-0.5, 2.5)
+        ax_spec.set_ylabel("Spectral Index $\\beta$")
+        ax_spec.set_title(f"{title}\nSpectral Indices")
+        ax_spec.legend(loc='upper right', fontsize='small')
+        
+        # Add text labels on bars
+        for bar in bars:
+            height = bar.get_height()
+            ax_spec.text(bar.get_x() + bar.get_width()/2., height + 0.05,\
+                        f'{height:.2f}', ha='center', va='bottom', fontsize=10)
+        
+        # Print the results to stdout for verification
+        print(f"[{title}] Fitted Betas: {betas}")
 
-    # 1. Spectral Indices
-    band_names = list(results["individual_metrics"].keys())
-    betas = [results["individual_metrics"][name]["beta"] for name in band_names]
-    axes[0].bar(band_names, betas, color=palette[:len(band_names)], alpha=0.8, edgecolor="#ffffff", linewidth=1)
-    axes[0].set_ylabel("Spectral Index ($\\beta$)", fontweight="bold", fontsize=12)
-    axes[0].set_title("Estimated Spectral Indices ($P(f) \\sim f^{-\\beta}$)", fontsize=14, fontweight="bold", loc="left")
-    axes[0].axhline(2.0, color="#2c3e50", linestyle="--", alpha=0.5, label="Red Noise ($\\beta=2$)")
-    axes[0].legend(loc="upper right", frameon=True, facecolor="#ffffff", edgecolor="#cccccc")
+        # 2. Plot Coherence (Right Column)
+        ax_coh = axes[idx, 1]
+        pair_key = f"{names[0]}_{names[1]}"
+        coh_map = results['coherence_maps'][pair_key]
+        
+        im = ax_coh.imshow(coh_map, aspect='auto', origin='lower', 
+                           extent=[0, 100, 1, 50], cmap='viridis')
+        ax_coh.set_title(f"Wavelet Coherence\n({pair_key})")
+        ax_coh.set_xlabel("Time [days]")
+        ax_coh.set_ylabel("Scale [days]")
+        fig.colorbar(im, ax=ax_coh, label="Coherence $R^2$")
 
-    # 2. Wavelet Coherence Map (W146 vs W184)
-    pair_key = "W146_W184"
-    if pair_key in results["coherence_maps"]:
-        coh_map = results["coherence_maps"][pair_key]
-        im = axes[1].imshow(coh_map, aspect='auto', origin='lower', 
-                            extent=[t[0], t[-1], widths[0], widths[-1]],
-                            cmap='viridis')
-        fig.colorbar(im, ax=axes[1], label='Coherence')
-        axes[1].set_ylabel("Scale (Width)", fontweight="bold", fontsize=12)
-        axes[1].set_xlabel("Time (Days)", fontweight="bold", fontsize=12)
-        axes[1].set_title(f"Wavelet Coherence: {pair_key}", fontsize=14, fontweight="bold", loc="left")
-    else:
-        axes[1].text(0.5, 0.5, "Coherence map not found", ha='center')
-
-    plt.tight_layout()
-    out_path = "../docs/noise_demo.png"
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    plt.savefig(out_path, bbox_inches="tight", facecolor="#ffffff")
-    print(f"✅ Noise demo plot saved to {out_path}")
+    plt.savefig("noise_comparison_fixed.png", dpi=150)
+    print("Saved noise_comparison_fixed.png")
 
 if __name__ == "__main__":
-    main()
+    run_comparison()

@@ -85,7 +85,33 @@ For non-periodic light curves, the library provides a robust Gaussian Process (G
 
 ---
 
-### 8. Cumulative Sum (CUSUM) Anomaly Detection
+### 8. Noise Characterisation & Multi-Band Analysis
+
+![Noise Characterisation Demo](docs/noise_demo.png)
+
+*   **Top Panel**: Estimated spectral indices ($\beta$) for different photometric bands.
+*   **Bottom Panel**: Wavelet coherence map between two bands, showing correlated noise across scales and time.
+
+```python
+from microwavelet import characterize_multiband_noise
+
+# 1. Input data (multi-band residuals)
+bands_data = {
+    "W146": {"t": t1, "y": y1, "y_err": e1},
+    "W184": {"t": t2, "y": y2, "y_err": e2},
+}
+
+# 2. Run multi-band noise analysis
+results = characterize_multiband_noise(bands_data)
+
+# 3. Access metrics
+print(results["individual_metrics"]["W146"]["beta"])
+print(results["coherence_matrix"]["W146_W184"])
+```
+
+---
+
+### 9. Cumulative Sum (CUSUM) Anomaly Detection
 
 To detect abrupt shifts or persistent deviations from a flat baseline (e.g., weak or fast microlensing signals, sharp magnification peaks), the library provides cumulative sum (CUSUM) detection routines:
 *   **Linear CUSUM (`run_linear_cusum`)**: Accumulates positive residual deviations, particularly useful for detecting magnification peaks.

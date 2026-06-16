@@ -35,21 +35,20 @@ def generate_microlensing_data(t, t0, u0, tE, baseline=1.0, anomaly_t=None, anom
 
 def run_demo():
     # Parameters
-    # Extended time range to see the baseline clearly
     t_start, t_end = 0, 200
     n_points = 3000
     t = np.linspace(t_start, t_end, n_points)
     
     # Event centered in the middle of the new range
-    t0, u0, tE = 100, 0.5, 15
+    t0, u0, tE = 100, 0.8, 15 # Increased u0 to reduce peak magnification
     baseline = 1.0
     
     # Anomaly: smaller and narrower than the event
     anomaly_t = 110
-    anomaly_amp = 0.3
+    anomaly_amp = 0.2 # Reduced amplitude
     anomaly_width = 0.5 
     
-    noise_std = 0.01
+    noise_std = 0.02 # Increased noise to make detection more challenging
 
     # 1. Generate Data
     y_data, y_true, anomaly_signal = generate_microlensing_data(
@@ -61,8 +60,8 @@ def run_demo():
     residuals_baseline_raw = y_data - baseline
     residuals_baseline_sigma = residuals_baseline_raw / noise_std
     
-    # Use bidirectional=False to detect the onset of the event.
-    cusum_event = find_anomalies_cusum(t, residuals_baseline_sigma, threshold=20.0, k=1.0, bidirectional=False)
+    # Use bidirectional CUSUM for the event as requested
+    cusum_event = find_anomalies_cusum(t, residuals_baseline_sigma, threshold=25.0, k=1.0, bidirectional=True)
 
     # --- STAGE 2: PSPL Fitting ---
     def fit_func(t, baseline_fit, t0_fit, u0_fit, tE_fit):
@@ -86,7 +85,7 @@ def run_demo():
     residuals_pspl_sigma = residuals_pspl_raw / noise_std
     
     # Use bidirectional quadratic CUSUM for the anomaly
-    cusum_anomaly = find_anomalies_cusum(t, residuals_pspl_sigma, threshold=10.0, k=2.0, bidirectional=True)
+    cusum_anomaly = find_anomalies_cusum(t, residuals_pspl_sigma, threshold=12.0, k=2.0, bidirectional=True)
 
     # --- Plotting (4 Panels: Data, Event Score, Anomaly Score, Comparison) ---
     fig, axes = plt.subplots(4, 1, figsize=(12, 20), constrained_layout=True)
@@ -102,7 +101,7 @@ def run_demo():
 
     # Panel 2: Event CUSUM Score
     ax = axes[1]
-    ax.plot(t, cusum_event['cusum_statistic'], 'g-', label='Event CUSUM Score (Quadratic)')
+    ax.plot(t, cusum_event['cusum_statistic'], 'g-', label='Event CUSUM Score (Bidirectional)')
     if cusum_event['triggered']:
         ax.axvspan(cusum_event['onset'], cusum_event['end'], color='green', alpha=0.1)
     ax.set_title("2. Event Detection CUSUM Score (Residuals vs Baseline)")
@@ -111,7 +110,7 @@ def run_demo():
 
     # Panel 3: Anomaly CUSUM Score
     ax = axes[2]
-    ax.plot(t, cusum_anomaly['cusum_statistic'], 'b-', label='Anomaly CUSUM Score (Bidirectional Quadratic)')
+    ax.plot(t, cusum_anomaly['cusum_statistic'], 'b-', label='Anomaly CUSUM Score (Bidirectional)')
     if cusum_anomaly['triggered']:
         ax.axvspan(cusum_anomaly['onset'], cusum_anomaly['end'], color='blue', alpha=0.1)
     ax.set_title("3. Anomaly Detection CUSUM Score (Residuals vs PSPL)")
@@ -127,8 +126,8 @@ def run_demo():
     ax.set_ylabel("Score")
     ax.legend()
 
-    plt.savefig("docs/microlensing_cusum_workflow_v5.png", dpi=150)
-    print("Saved docs/microlensing_cusum_workflow_v5.png")
+    plt.savefig("docs/microlensing_cusum_workflow_v6.png", dpi=150)
+    print("Saved docs/microlensing_cusum_workflow_v6.png")
 
 if __name__ == "__main__":
     run_demo()

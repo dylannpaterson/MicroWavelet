@@ -1,8 +1,9 @@
 import numpy as np
 from astropy.timeseries import LombScargle
-from scipy.signal import fftconvolve
 from scipy.ndimage import uniform_filter1d
 from scipy.optimize import curve_fit, least_squares
+from scipy.signal import fftconvolve
+
 
 def _psd_model_log(x, logA, beta, logC):
     """Log-space version of the power law model for stable fitting.
@@ -13,6 +14,7 @@ def _psd_model_log(x, logA, beta, logC):
     b = logC
     m = np.maximum(a, b)
     return m + np.log10(np.power(10, a - m) + np.power(10, b - m))
+
 
 def estimate_spectral_index(t, y, min_freq=None, max_freq=None):
     """
@@ -45,17 +47,17 @@ def estimate_spectral_index(t, y, min_freq=None, max_freq=None):
     """
     t = np.asarray(t)
     y = np.asarray(y)
-    
+
     ls = LombScargle(t, y)
     frequency, power = ls.autopower()
 
     # Filter frequencies
-    mask = (frequency > 0)
+    mask = frequency > 0
     if min_freq is not None:
-        mask &= (frequency >= min_freq)
+        mask &= frequency >= min_freq
     if max_freq is not None:
-        mask &= (frequency <= max_freq)
-    mask &= (power > 0)
+        mask &= frequency <= max_freq
+    mask &= power > 0
 
     f_fit = frequency[mask]
     p_fit = power[mask]
@@ -66,14 +68,14 @@ def estimate_spectral_index(t, y, min_freq=None, max_freq=None):
     # Log-space fitting to handle the massive dynamic range of power laws.
     # We fit log10(P) = log10(A * f^-beta + C)
     # This is much more stable than fitting in linear space.
-    
+
     # Initial guesses in log-space
     logA_guess = np.log10(np.max(p_fit))
     beta_guess = 1.0
     logC_guess = np.log10(np.min(p_fit) + 1e-20)
-    
+
     p0 = [logA_guess, beta_guess, logC_guess]
-    
+
     # Prepare data for log-space fit
     x_data = np.log10(f_fit)
     y_data = np.log10(np.clip(p_fit, 1e-20, None))
@@ -83,13 +85,13 @@ def estimate_spectral_index(t, y, min_freq=None, max_freq=None):
         def residuals(params, x, y):
             return _psd_model_log(x, *params) - y
 
-        res_ls = least_squares(residuals, p0, args=(x_data, y_data), loss='soft_l1')
+        res_ls = least_squares(residuals, p0, args=(x_data, y_data), loss="soft_l1")
         popt = res_ls.x
-        
+
         logA, beta, logC = popt
         A = 10**logA
         C = 10**logC
-        
+
         # Calculate errors using the covariance matrix from curve_fit (as a proxy)
         # or just use the scale of the residuals.
         # For simplicity, we'll use curve_fit to get the covariance if possible.
@@ -97,15 +99,15 @@ def estimate_spectral_index(t, y, min_freq=None, max_freq=None):
             _, pcov = curve_fit(_psd_model_log, x_data, y_data, p0=p0)
             perr = np.sqrt(np.diag(pcov))
             beta_err = perr[1]
-        except:
+        except Exception:
             beta_err = np.nan
-        
+
         # R-squared in log-space
         y_pred = _psd_model_log(x_data, *popt)
-        ss_res = np.sum((y_data - y_pred)**2)
-        ss_tot = np.sum((y_data - np.mean(y_data))**2)
+        ss_res = np.sum((y_data - y_pred) ** 2)
+        ss_tot = np.sum((y_data - np.mean(y_data)) ** 2)
         r_squared = 1 - (ss_res / ss_tot)
-        
+
         return {
             "beta": float(beta),
             "beta_err": float(beta_err),
@@ -118,12 +120,14 @@ def estimate_spectral_index(t, y, min_freq=None, max_freq=None):
     except Exception as e:
         return {"error": str(e)}
 
+
 class WaveletCoherenceAnalyzer:
     """
     Analyzes coherence between two time-series using Continuous Wavelet Transform (CWT).
     Designed for unevenly sampled data via interpolation.
     """
-    def __init__(self, widths=None, wavelet_type='ricker'):
+
+    def __init__(self, widths=None, wavelet_type="ricker"):
         """
         Parameters
         ----------
@@ -140,21 +144,22 @@ class WaveletCoherenceAnalyzer:
         # Create a local time grid for the kernel
         # We use a width of 5*scale to ensure the kernel decays to zero
         tk = np.linspace(-5 * scale, 5 * scale, int(10 * scale) + 1)
-        if len(tk) < 5: tk = np.linspace(-5, 5, 10)
-        
-        if self.wavelet_type == 'ricker':
+        if len(tk) < 5:
+            tk = np.linspace(-5, 5, 10)
+
+        if self.wavelet_type == "ricker":
             # Mexican Hat: (1 - x^2) * exp(-x^2 / 2)
             # We use x = tk / scale
             x = tk / scale
             kernel = (1.0 - x**2) * np.exp(-0.5 * x**2)
-        elif self.wavelet_type == 'gaussian':
+        elif self.wavelet_type == "gaussian":
             x = tk / scale
             kernel = np.exp(-0.5 * x**2)
         else:
             raise ValueError(f"Unknown wavelet type: {self.wavelet_type}")
-            
+
         # L1 Normalization
-        kernel /= (np.sum(np.abs(kernel)) + 1e-12)
+        kernel /= np.sum(np.abs(kernel)) + 1e-12
         return tk, kernel
 
     def compute_cwt(self, t_grid, y):
@@ -162,19 +167,19 @@ class WaveletCoherenceAnalyzer:
         n_time = len(t_grid)
         n_scales = len(self.widths)
         cwt_map = np.zeros((n_scales, n_time))
-        
+
         for i, scale in enumerate(self.widths):
             tk, kernel = self._get_kernel(scale)
-            # Use fftconvolve for speed. 
+            # Use fftconvolve for speed.
             # Mode='same' ensures the output matches t_grid length.
-            cwt_map[i, :] = fftconvolve(y, kernel, mode='same')
-            
+            cwt_map[i, :] = fftconvolve(y, kernel, mode="same")
+
         return cwt_map
 
     def compute_coherence(self, t_grid, y1, y2):
         """
         Computes the wavelet coherence between two signals on a regular grid.
-        
+
         Returns
         -------
         coherence : 2D array (scales x time)
@@ -183,34 +188,35 @@ class WaveletCoherenceAnalyzer:
         # 1. Compute CWT for both signals
         cwt1 = self.compute_cwt(t_grid, y1)
         cwt2 = self.compute_cwt(t_grid, y2)
-        
+
         # 2. Compute Cross-Wavelet Transform (XWT)
         # XWT(s, t) = W1(s, t) * conj(W2(s, t))
         xwt = cwt1 * np.conj(cwt2)
-        
+
         # 3. Compute Coherence
         # R^2 = |S(s^-1 * XWT)|^2 / (S(s^-1 * |W1|^2) * S(s^-1 * |W2|^2))
         # We use a moving average for smoothing in both time and scale.
         #
         # Magnitude squared
-        abs_xwt_sq = np.abs(xwt)**2
-        abs_cwt1_sq = np.abs(cwt1)**2
-        abs_cwt2_sq = np.abs(cwt2)**2
-        
+        abs_xwt_sq = np.abs(xwt) ** 2
+        abs_cwt1_sq = np.abs(cwt1) ** 2
+        abs_cwt2_sq = np.abs(cwt2) ** 2
+
         # Smoothing in time (axis 1) then scale (axis 0)
         def smooth_both(arr):
             res = uniform_filter1d(arr, size=5, axis=1)
             res = uniform_filter1d(res, size=3, axis=0)
             return res
-        
+
         S_xwt = smooth_both(abs_xwt_sq)
         S_cwt1 = smooth_both(abs_cwt1_sq)
         S_cwt2 = smooth_both(abs_cwt2_sq)
-        
+
         coherence = S_xwt / (S_cwt1 * S_cwt2 + 1e-12)
         coherence = np.clip(coherence, 0, 1)
-        
+
         return coherence, xwt
+
 
 def characterize_noise(t, y, y_err=None, bin_sizes=None):
     """
@@ -287,6 +293,7 @@ def characterize_noise(t, y, y_err=None, bin_sizes=None):
         "has_red_noise": has_red_noise,
     }
 
+
 def characterize_multiband_noise(bands_data, widths=None):
     """
     Analyzes noise correlations across multiple photometric bands.
@@ -294,7 +301,7 @@ def characterize_multiband_noise(bands_data, widths=None):
     Parameters
     ----------
     bands_data : dict
-        A dictionary where keys are band names (e.g., 'W146', 'W184') 
+        A dictionary where keys are band names (e.g., 'W146', 'W184')
         and values are dicts containing:
             't': np.ndarray (times)
             'y': np.ndarray (residuals)
@@ -303,67 +310,71 @@ def characterize_multiband_noise(bands_data, widths=None):
         Scales for wavelet analysis.
     """
     from scipy.interpolate import interp1d
-    
+
     band_names = list(bands_data.keys())
     n_bands = len(band_names)
-    
+
     # 1. Find common time grid
     all_t = []
     for name in band_names:
-        all_t.append(bands_data[name]['t'])
-    
+        all_t.append(bands_data[name]["t"])
+
     t_min = max(np.min(t) for t in all_t)
     t_max = min(np.max(t) for t in all_t)
-    
+
     # Use a dense grid for wavelet analysis
     # We'll use the median cadence of all bands as a guide
     cadences = []
     for name in band_names:
-        t_sorted = np.sort(bands_data[name]['t'])
+        t_sorted = np.sort(bands_data[name]["t"])
         cadences.append(np.median(np.diff(t_sorted)))
     avg_cadence = np.mean(cadences)
-    
+
     t_grid = np.arange(t_min, t_max, avg_cadence)
-    
+
     # 2. Interpolate all bands to the common grid
     interpolated_y = {}
     for name in band_names:
-        t = bands_data[name]['t']
-        y = bands_data[name]['y']
+        t = bands_data[name]["t"]
+        y = bands_data[name]["y"]
         f = interp1d(t, y, bounds_error=False, fill_value="extrapolate")
         interpolated_y[name] = f(t_grid)
-        
+
     # 3. Individual Spectral Analysis
     individual_metrics = {}
     for name in band_names:
-        individual_metrics[name] = estimate_spectral_index(bands_data[name]['t'], bands_data[name]['y'])
-        
+        individual_metrics[name] = estimate_spectral_index(
+            bands_data[name]["t"], bands_data[name]["y"]
+        )
+
     # 4. Wavelet Coherence Analysis
     if widths is None:
         widths = np.geomspace(1.0, 50.0, 30)
-        
+
     analyzer = WaveletCoherenceAnalyzer(widths=widths)
-    
+
     coherence_matrix = {}
     coherence_maps = {}
-    
+
     for i in range(n_bands):
         for j in range(i + 1, n_bands):
             name_i = band_names[i]
             name_j = band_names[j]
-            
-            coh_map, _ = analyzer.compute_coherence(t_grid, interpolated_y[name_i], interpolated_y[name_j])
-            
+
+            coh_map, _ = analyzer.compute_coherence(
+                t_grid, interpolated_y[name_i], interpolated_y[name_j]
+            )
+
             # Integrated coherence (mean over all scales and time)
             integrated_coh = np.mean(coh_map)
-            
+
             pair_key = f"{name_i}_{name_j}"
             coherence_matrix[pair_key] = float(integrated_coh)
             coherence_maps[pair_key] = coh_map
-            
+
     return {
         "individual_metrics": individual_metrics,
         "coherence_matrix": coherence_matrix,
         "coherence_maps": coherence_maps,
-        "t_grid": t_grid
+        "t_grid": t_grid,
     }

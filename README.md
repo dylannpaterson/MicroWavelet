@@ -178,16 +178,34 @@ for anomaly in results["anomalies"]:
     print(f"Timescale tE: {anomaly['tE']:.2f} (u0: {anomaly['u0']:.3f})")
 ```
 
-### Direct CUSUM Usage Example
+### CUSUM-based Anomaly Detection
 
-You can also import and run the cumulative sum algorithms directly on a sequence of standardized residuals or raw light curve arrays:
+The library provides several CUSUM-based tools for detecting deviations in light curves. These can be used for both **event detection** (finding the main microlensing peak) and **anomaly detection** (finding planetary deviations or stellar flares).
+
+#### Detection Modes
+
+- **Forward CUSUM**: Accumulates deviations from the start of the time series. Excellent for detecting the onset of a magnification event.
+- **Backward CUSUM**: Accumulates deviations from the end of the time series (running backwards). Useful for verifying the symmetry of an event or detecting late-time anomalies.
+- **Bidirectional CUSUM**: The minimum of the forward and backward passes. This is the most robust mode for localizing the exact peak and duration of an anomaly, as it prevents the "drift" that occurs when a single-pass CUSUM accumulates too much signal from a long-duration event.
+
+#### Demonstration
+
+The following plot demonstrates these modes in action:
+
+![CUSUM Anomaly Detection Demo](docs/cusum_demo.png)
 
 ```python
-from microwavelet import run_linear_cusum, seed_by_flat_cusum, find_anomalies_cusum
+from microwavelet import find_anomalies_cusum
 
-# Compute standardized residuals manually
-y_base = np.median(y)
-residuals = (y - y_base) / y_err
+# Detect anomalies in standardized residuals
+# threshold: significance level (H)
+# k: slack parameter to suppress baseline noise
+# bidirectional: use both forward and backward passes
+anomalies = find_anomalies_cusum(t, residuals, threshold=25.0, k=2.0, bidirectional=True)
+
+for anom in anomalies:
+    print(f"Detected anomaly at t={anom['t0']:.2f} with significance {anom['score']:.1f}")
+```residuals = (y - y_base) / y_err
 
 # 1. Run linear CUSUM
 cusum_scores = run_linear_cusum(residuals, k=1.0)

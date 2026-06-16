@@ -35,13 +35,17 @@ def generate_microlensing_data(t, t0, u0, tE, baseline=1.0, anomaly_t=None, anom
 
 def run_demo():
     # Parameters
-    n_points = 1500
-    t = np.linspace(0, 100, n_points)
-    t0, u0, tE = 50, 0.5, 15
+    # Extended time range to see the baseline clearly
+    t_start, t_end = 0, 200
+    n_points = 3000
+    t = np.linspace(t_start, t_end, n_points)
+    
+    # Event centered in the middle of the new range
+    t0, u0, tE = 100, 0.5, 15
     baseline = 1.0
     
     # Anomaly: smaller and narrower than the event
-    anomaly_t = 60
+    anomaly_t = 110
     anomaly_amp = 0.3
     anomaly_width = 0.5 
     
@@ -57,9 +61,7 @@ def run_demo():
     residuals_baseline_raw = y_data - baseline
     residuals_baseline_sigma = residuals_baseline_raw / noise_std
     
-    # Use linear CUSUM for the event (detecting positive deviation from baseline)
-    # Note: find_anomalies_cusum uses quadratic. For a simple event, quadratic works too.
-    # We'll use bidirectional=False to detect the onset of the event.
+    # Use bidirectional=False to detect the onset of the event.
     cusum_event = find_anomalies_cusum(t, residuals_baseline_sigma, threshold=20.0, k=1.0, bidirectional=False)
 
     # --- STAGE 2: PSPL Fitting ---
@@ -125,8 +127,8 @@ def run_demo():
     ax.set_ylabel("Score")
     ax.legend()
 
-    plt.savefig("docs/microlensing_cusum_workflow_v4.png", dpi=150)
-    print("Saved docs/microlensing_cusum_workflow_v4.png")
+    plt.savefig("docs/microlensing_cusum_workflow_v5.png", dpi=150)
+    print("Saved docs/microlensing_cusum_workflow_v5.png")
 
 if __name__ == "__main__":
     run_demo()

@@ -5,8 +5,8 @@ type: software
 authors:
   - family-names: "Paterson"
     given-names: "Dylan"
-version: "26.1.0"
-date-released: "2026-05-26"
+version: "26.6.16"
+date-released: "2026-06-16"
 license: MIT
 repository-code: "https://github.com/dylannpaterson/MicroWavelet"
 abstract: "CWT-based anomaly detector for multi-filter microlensing light curves."

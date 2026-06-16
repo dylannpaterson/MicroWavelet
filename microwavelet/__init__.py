@@ -30,4 +30,4 @@ __all__ = [
     "get_paczynski",
 ]
 
-__version__ = "26.1.7"
+__version__ = "26.6.16"

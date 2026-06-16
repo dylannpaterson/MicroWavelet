@@ -188,23 +188,23 @@ The library provides several CUSUM-based tools for detecting deviations in light
 - **Backward CUSUM**: Accumulates deviations from the end of the time series (running backwards). Useful for verifying the symmetry of an event or detecting late-time anomalies.
 - **Bidirectional CUSUM**: The minimum of the forward and backward passes. This is the most robust mode for localizing the exact peak and duration of an anomaly, as it prevents the "drift" that occurs when a single-pass CUSUM accumulates too much signal from a long-duration event.
 
-#### Demonstration
+#### Multi-Stage CUSUM Workflow Demonstration
 
-The following plot demonstrates these modes in action:
+The following plot demonstrates a complete multi-stage pipeline:
+1.  **Event Detection**: Using bidirectional CUSUM on residuals relative to a flat baseline to identify the onset of a microlensing event.
+2.  **PSPL Fitting**: Fitting a Point Source Point Lens (PSPL) model to the observed light curve.
+3.  **Anomaly Detection**: Using bidirectional CUSUM on the residuals of the PSPL fit to isolate planetary or other transient deviations.
 
-![CUSUM Anomaly Detection Demo](docs/cusum_demo.png)
+![Multi-Stage CUSUM Workflow](docs/microlensing_cusum_workflow_v6.png)
 
 ```python
 from microwavelet import find_anomalies_cusum
 
-# Detect anomalies in standardized residuals
-# threshold: significance level (H)
-# k: slack parameter to suppress baseline noise
-# bidirectional: use both forward and backward passes
-anomalies = find_anomalies_cusum(t, residuals, threshold=25.0, k=2.0, bidirectional=True)
+# 1. Detect the main event (vs baseline)
+event = find_anomalies_cusum(t, residuals_baseline, threshold=25.0, bidirectional=True)
 
-for anom in anomalies:
-    print(f"Detected anomaly at t={anom['t0']:.2f} with significance {anom['score']:.1f}")
+# 2. Detect the anomaly (vs PSPL model)
+anomaly = find_anomalies_cusum(t, residuals_pspl, threshold=12.0, bidirectional=True)
 ```residuals = (y - y_base) / y_err
 
 # 1. Run linear CUSUM

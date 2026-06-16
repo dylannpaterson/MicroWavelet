@@ -18,7 +18,8 @@ from scipy import optimize
 from scipy.interpolate import CubicSpline
 from scipy.stats import median_abs_deviation
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
+from sklearn.gaussian_process.kernels import RBF, WhiteKernel
+from sklearn.gaussian_process.kernels import ConstantKernel as C
 
 # ---------------------------------------------------------------------------
 # 1. Period search
@@ -166,7 +167,7 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
     y = np.asarray(y)
     y_err = np.asarray(y_err)
     phase = (t % period) / period
-    
+
     y_low = y[y <= np.median(y)]
     if len(y_low) > 5:
         base_level = np.median(y_low)
@@ -302,8 +303,8 @@ def fit_periodic_gp_robust(t, y, y_err, period, n_bins=None, max_iter=4, sigma_c
 def gp_detrend(t, y, y_err, threshold=3.0):
     """
     Robust Masked Gaussian Process detrending for non-periodic light curves.
-    
-    This method prevents transient microlensing signals from being absorbed 
+
+    This method prevents transient microlensing signals from being absorbed
     into the baseline by iteratively masking outliers before the final GP fit.
 
     Returns
@@ -319,35 +320,42 @@ def gp_detrend(t, y, y_err, threshold=3.0):
     y = np.asarray(y)
     y_err = np.asarray(y_err)
     t_reshaped = t.reshape(-1, 1)
-    
+
     # Step 1: Initial Fit (Use a very smooth kernel to avoid absorbing transients)
     # We use a large length scale and fix it to ensure the first pass is a 'broad' baseline.
-    kernel_smooth = C(1.0, (1e-3, 1e3)) * RBF(length_scale=100.0, length_scale_bounds=(100.0, 100.0)) + WhiteKernel(noise_level=0.1, noise_level_bounds=(0.1, 0.1))
-    gp_initial = GaussianProcessRegressor(kernel=kernel_smooth, alpha=y_err**2, n_restarts_optimizer=1)
+    kernel_smooth = C(1.0, (1e-3, 1e3)) * RBF(
+        length_scale=100.0, length_scale_bounds=(100.0, 100.0)
+    ) + WhiteKernel(noise_level=0.1, noise_level_bounds=(0.1, 0.1))
+    gp_initial = GaussianProcessRegressor(
+        kernel=kernel_smooth, alpha=y_err**2, n_restarts_optimizer=1
+    )
     gp_initial.fit(t_reshaped, y)
     y_pred_initial = gp_initial.predict(t_reshaped)
-    
+
     # Step 2: Identify Outliers (Standardized Residuals)
     residuals = (y - y_pred_initial) / y_err
     mask = np.abs(residuals) < threshold
-    
+
     # Step 3: Re-fit using only masked points (Use the original kernel structure)
     kernel_robust = C(1.0) * RBF(length_scale=20.0) + WhiteKernel(noise_level=0.01)
     if np.any(mask):
         t_masked = t[mask].reshape(-1, 1)
         y_masked = y[mask]
         y_err_masked = y_err[mask]
-        
-        gp_robust = GaussianProcessRegressor(kernel=kernel_robust, alpha=y_err_masked**2, n_restarts_optimizer=5)
+
+        gp_robust = GaussianProcessRegressor(
+            kernel=kernel_robust, alpha=y_err_masked**2, n_restarts_optimizer=5
+        )
         gp_robust.fit(t_masked, y_masked)
         y_baseline = gp_robust.predict(t_reshaped)
     else:
         y_baseline = y_pred_initial
-        
+
     y_detrended = y / y_baseline
     y_err_scaled = y_err * (y_detrended / np.where(y > 0, y, 1.0))
-    
+
     return y_detrended, y_err_scaled, y_baseline
+
 
 def detrend_light_curve_gp(band_data, threshold=3.0):
     """

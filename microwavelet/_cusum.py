@@ -98,7 +98,7 @@ def seed_by_flat_cusum(t, y, y_err, method="linear", k=1.0, threshold=10.0, retu
     changes = np.diff(is_triggered.astype(int))
     starts = np.where(changes == 1)[0] + 1
     ends = np.where(changes == -1)[0] + 1
-    
+
     if is_triggered[0]:
         starts = np.insert(starts, 0, 0)
     if is_triggered[-1]:
@@ -112,17 +112,17 @@ def seed_by_flat_cusum(t, y, y_err, method="linear", k=1.0, threshold=10.0, retu
             max_offset = np.argmax(sub_S)
             max_idx = start_idx + max_offset
             onset_idx = max(0, start_idx - 1)
-            
+
             t_onset = t[onset_idx]
             t_end = t[max_idx]
             duration = t_end - t_onset
             tE_seed = float(max(duration / 4.0, 2.0))
-            
+
             # 1. Primary candidate: peak absolute residual in the triggered region
             peak_offset = np.argmax(np.abs(r[onset_idx : max_idx + 1]))
             t0_seed = float(t[onset_idx + peak_offset])
             candidates.append((t0_seed, tE_seed, float(max_val)))
-            
+
             # 2. If the CUSUM window is wide, add grid checkpoints across the window to prevent local min trapping
             if duration > 10.0:
                 for frac in [0.25, 0.50, 0.75]:
@@ -210,7 +210,7 @@ def find_anomalies_cusum(t, residuals_sigma, threshold=25.0, k=2.0, bidirectiona
         S = np.minimum(S_f, S_b)
     else:
         S = run_quadratic_cusum(residuals_sigma, k=k)
-        
+
     max_score = float(np.max(S))
     max_idx = np.argmax(S)
 

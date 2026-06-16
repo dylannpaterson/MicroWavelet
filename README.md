@@ -85,7 +85,33 @@ For non-periodic light curves, the library provides a robust Gaussian Process (G
 
 ---
 
-### 8. Cumulative Sum (CUSUM) Anomaly Detection
+### 8. Noise Characterisation & Multi-Band Analysis
+
+![Noise Characterisation Demo](docs/noise_demo.png)
+
+*   **Top Panel**: Estimated spectral indices ($\beta$) for different photometric bands.
+*   **Bottom Panel**: Wavelet coherence map between two bands, showing correlated noise across scales and time.
+
+```python
+from microwavelet import characterize_multiband_noise
+
+# 1. Input data (multi-band residuals)
+bands_data = {
+    "W146": {"t": t1, "y": y1, "y_err": e1},
+    "W184": {"t": t2, "y": y2, "y_err": e2},
+}
+
+# 2. Run multi-band noise analysis
+results = characterize_multiband_noise(bands_data)
+
+# 3. Access metrics
+print(results["individual_metrics"]["W146"]["beta"])
+print(results["coherence_matrix"]["W146_W184"])
+```
+
+---
+
+### 9. Cumulative Sum (CUSUM) Anomaly Detection
 
 To detect abrupt shifts or persistent deviations from a flat baseline (e.g., weak or fast microlensing signals, sharp magnification peaks), the library provides cumulative sum (CUSUM) detection routines:
 *   **Linear CUSUM (`run_linear_cusum`)**: Accumulates positive residual deviations, particularly useful for detecting magnification peaks.
@@ -152,16 +178,34 @@ for anomaly in results["anomalies"]:
     print(f"Timescale tE: {anomaly['tE']:.2f} (u0: {anomaly['u0']:.3f})")
 ```
 
-### Direct CUSUM Usage Example
+### CUSUM-based Anomaly Detection
 
-You can also import and run the cumulative sum algorithms directly on a sequence of standardized residuals or raw light curve arrays:
+The library provides several CUSUM-based tools for detecting deviations in light curves. These can be used for both **event detection** (finding the main microlensing peak) and **anomaly detection** (finding planetary deviations or stellar flares).
+
+#### Detection Modes
+
+- **Forward CUSUM**: Accumulates deviations from the start of the time series. Excellent for detecting the onset of a magnification event.
+- **Backward CUSUM**: Accumulates deviations from the end of the time series (running backwards). Useful for verifying the symmetry of an event or detecting late-time anomalies.
+- **Bidirectional CUSUM**: The minimum of the forward and backward passes. This is the most robust mode for localizing the exact peak and duration of an anomaly, as it prevents the "drift" that occurs when a single-pass CUSUM accumulates too much signal from a long-duration event.
+
+#### Multi-Stage CUSUM Workflow Demonstration
+
+The following plot demonstrates a complete multi-stage pipeline:
+1.  **Event Detection**: Using bidirectional CUSUM on residuals relative to a flat baseline to identify the onset of a microlensing event.
+2.  **PSPL Fitting**: Fitting a Point Source Point Lens (PSPL) model to the observed light curve.
+3.  **Anomaly Detection**: Using bidirectional CUSUM on the residuals of the PSPL fit to isolate planetary or other transient deviations.
+
+![Multi-Stage CUSUM Workflow](docs/microlensing_cusum_workflow_v7.png)
 
 ```python
-from microwavelet import run_linear_cusum, seed_by_flat_cusum, find_anomalies_cusum
+from microwavelet import find_anomalies_cusum
 
-# Compute standardized residuals manually
-y_base = np.median(y)
-residuals = (y - y_base) / y_err
+# 1. Detect the main event (vs baseline)
+event = find_anomalies_cusum(t, residuals_baseline, threshold=25.0, bidirectional=True)
+
+# 2. Detect the anomaly (vs PSPL model)
+anomaly = find_anomalies_cusum(t, residuals_pspl, threshold=12.0, bidirectional=True)
+```residuals = (y - y_base) / y_err
 
 # 1. Run linear CUSUM
 cusum_scores = run_linear_cusum(residuals, k=1.0)

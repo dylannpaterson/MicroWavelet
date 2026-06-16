@@ -40,15 +40,15 @@ def run_demo():
     t = np.linspace(t_start, t_end, n_points)
     
     # Event centered in the middle of the new range
-    t0, u0, tE = 100, 0.8, 15 # Increased u0 to reduce peak magnification
+    t0, u0, tE = 100, 0.8, 15
     baseline = 1.0
     
     # Anomaly: smaller and narrower than the event
     anomaly_t = 110
-    anomaly_amp = 0.2 # Reduced amplitude
+    anomaly_amp = 0.2 
     anomaly_width = 0.5 
     
-    noise_std = 0.02 # Increased noise to make detection more challenging
+    noise_std = 0.02
 
     # 1. Generate Data
     y_data, y_true, anomaly_signal = generate_microlensing_data(
@@ -60,7 +60,7 @@ def run_demo():
     residuals_baseline_raw = y_data - baseline
     residuals_baseline_sigma = residuals_baseline_raw / noise_std
     
-    # Use bidirectional CUSUM for the event as requested
+    # Use bidirectional CUSUM for the event
     cusum_event = find_anomalies_cusum(t, residuals_baseline_sigma, threshold=25.0, k=1.0, bidirectional=True)
 
     # --- STAGE 2: PSPL Fitting ---
@@ -87,47 +87,45 @@ def run_demo():
     # Use bidirectional quadratic CUSUM for the anomaly
     cusum_anomaly = find_anomalies_cusum(t, residuals_pspl_sigma, threshold=12.0, k=2.0, bidirectional=True)
 
-    # --- Plotting (4 Panels: Data, Event Score, Anomaly Score, Comparison) ---
-    fig, axes = plt.subplots(4, 1, figsize=(12, 20), constrained_layout=True)
+    # --- Plotting (2 Panels) ---
+    fig, axes = plt.subplots(2, 1, figsize=(12, 12), constrained_layout=True)
 
-    # Panel 1: Light Curve
+    # Panel 1: Light Curve + Event CUSUM Score
     ax = axes[0]
+    ax_cusum = ax.twinx()
     ax.scatter(t, y_data, s=10, color='black', alpha=0.4, label='Observed Data')
     ax.plot(t, y_pspl, 'r-', linewidth=2, label='Fitted PSPL Model')
     ax.axhline(baseline, color='gray', linestyle='--', label='Baseline')
-    ax.set_title("1. Microlensing Light Curve & PSPL Fit")
-    ax.set_ylabel("Flux")
-    ax.legend()
-
-    # Panel 2: Event CUSUM Score
-    ax = axes[1]
-    ax.plot(t, cusum_event['cusum_statistic'], 'g-', label='Event CUSUM Score (Bidirectional)')
+    ax_cusum.plot(t, cusum_event['cusum_statistic'], 'g-', alpha=0.7, label='Event CUSUM Score')
+    
     if cusum_event['triggered']:
         ax.axvspan(cusum_event['onset'], cusum_event['end'], color='green', alpha=0.1)
-    ax.set_title("2. Event Detection CUSUM Score (Residuals vs Baseline)")
-    ax.set_ylabel("Score")
-    ax.legend()
+        
+    ax.set_title("1. Microlensing Event Detection (Light Curve & Event CUSUM)")
+    ax.set_ylabel("Flux")
+    ax_cusum.set_ylabel("Event CUSUM Score")
+    ax.legend(loc='upper left')
+    ax_cusum.legend(loc='upper right')
 
-    # Panel 3: Anomaly CUSUM Score
-    ax = axes[2]
-    ax.plot(t, cusum_anomaly['cusum_statistic'], 'b-', label='Anomaly CUSUM Score (Bidirectional)')
+    # Panel 2: PSPL Residuals + Anomaly CUSUM Score
+    ax = axes[1]
+    ax_cusum = ax.twinx()
+    ax.scatter(t, residuals_pspl_raw, s=10, color='black', alpha=0.3, label='PSPL Residuals')
+    ax_cusum.plot(t, cusum_anomaly['cusum_statistic'], 'b-', alpha=0.7, label='Anomaly CUSUM Score')
+    
     if cusum_anomaly['triggered']:
         ax.axvspan(cusum_anomaly['onset'], cusum_anomaly['end'], color='blue', alpha=0.1)
-    ax.set_title("3. Anomaly Detection CUSUM Score (Residuals vs PSPL)")
-    ax.set_ylabel("Score")
-    ax.legend()
+        ax.axvline(cusum_anomaly['t0'], color='blue', linestyle='--', alpha=0.5)
 
-    # Panel 4: Comparison
-    ax = axes[3]
-    ax.plot(t, cusum_event['cusum_statistic'], 'g-', alpha=0.6, label='Event CUSUM Score')
-    ax.plot(t, cusum_anomaly['cusum_statistic'], 'b-', alpha=0.6, label='Anomaly CUSUM Score')
-    ax.set_title("4. CUSUM Score Comparison")
+    ax.set_title("2. Anomaly Detection (PSPL Residuals & Anomaly CUSUM)")
     ax.set_xlabel("Time [days]")
-    ax.set_ylabel("Score")
-    ax.legend()
+    ax.set_ylabel("Residuals")
+    ax_cusum.set_ylabel("Anomaly CUSUM Score")
+    ax.legend(loc='upper left')
+    ax_cusum.legend(loc='upper right')
 
-    plt.savefig("docs/microlensing_cusum_workflow_v6.png", dpi=150)
-    print("Saved docs/microlensing_cusum_workflow_v6.png")
+    plt.savefig("docs/microlensing_cusum_workflow_v7.png", dpi=150)
+    print("Saved docs/microlensing_cusum_workflow_v7.png")
 
 if __name__ == "__main__":
     run_demo()

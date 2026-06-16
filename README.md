@@ -195,7 +195,7 @@ The following plot demonstrates a complete multi-stage pipeline:
 2.  **PSPL Fitting**: Fitting a Point Source Point Lens (PSPL) model to the observed light curve.
 3.  **Anomaly Detection**: Using bidirectional CUSUM on the residuals of the PSPL fit to isolate planetary or other transient deviations.
 
-![Multi-Stage CUSUM Workflow](docs/microlensing_cusum_workflow_v6.png)
+![Multi-Stage CUSUM Workflow](docs/microlensing_cusum_workflow_v7.png)
 
 ```python
 from microwavelet import find_anomalies_cusum

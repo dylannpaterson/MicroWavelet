@@ -103,8 +103,8 @@ def run_comparison():
         ax_coh.set_ylabel("Scale [days]")
         fig.colorbar(im, ax=ax_coh, label="Coherence $R^2$")
 
-    plt.savefig("noise_comparison_fixed.png", dpi=150)
-    print("Saved noise_comparison_fixed.png")
+    plt.savefig("docs/noise_demo.png", dpi=150)
+    print("Saved docs/noise_demo.png")
 
 if __name__ == "__main__":
     run_comparison()

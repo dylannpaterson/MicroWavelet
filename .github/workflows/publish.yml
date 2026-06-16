@@ -1,9 +1,16 @@
 name: Publish to PyPI
 
 # This workflow triggers whenever you publish a new Release on GitHub
+# or can be manually triggered via workflow_dispatch
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'The tag to publish (e.g. v26.6.16)'
+        required: true
+        default: ''
 
 jobs:
   pypi-publish:
